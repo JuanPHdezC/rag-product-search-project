@@ -1,0 +1,122 @@
+[
+    {
+      "id": "prod_001",
+      "name": "Sony WH-1000XM5",
+      "category": "audífonos",
+      "brand": "Sony",
+      "price": 179.99,
+      "currency": "USD",
+      "description": "Audífonos inalámbricos over-ear con cancelación de ruido líder en la industria, hasta 30 horas de batería, conexión multipoint con 2 dispositivos simultáneos, micrófono para llamadas con reducción de ruido de voz.",
+      "tags": ["inalámbrico", "cancelación de ruido", "bluetooth", "over-ear", "premium"]
+    },
+    {
+      "id": "prod_002",
+      "name": "Jabra Evolve2 55",
+      "category": "audífonos",
+      "brand": "Jabra",
+      "price": 195.00,
+      "currency": "USD",
+      "description": "Audífonos inalámbricos profesionales con cancelación de ruido activa, diseñados para videollamadas y trabajo remoto. Certificados para Microsoft Teams y Zoom. 50 horas de batería.",
+      "tags": ["inalámbrico", "cancelación de ruido", "trabajo remoto", "videollamadas", "bluetooth"]
+    },
+    {
+      "id": "prod_003",
+      "name": "Anker Soundcore Q45",
+      "category": "audífonos",
+      "brand": "Anker",
+      "price": 59.99,
+      "currency": "USD",
+      "description": "Audífonos inalámbricos económicos con cancelación de ruido activa, 50 horas de batería, diadema acolchada plegable, ideal para estudiantes y uso diario.",
+      "tags": ["inalámbrico", "cancelación de ruido", "económico", "estudiantes", "bluetooth"]
+    },
+    {
+      "id": "prod_004",
+      "name": "Apple AirPods Pro 2",
+      "category": "audífonos",
+      "brand": "Apple",
+      "price": 199.00,
+      "currency": "USD",
+      "description": "Audífonos in-ear inalámbricos con cancelación de ruido adaptativa, modo ambiente, audio espacial personalizado, resistencia al agua IPX4, integración nativa con iPhone y Apple Watch.",
+      "tags": ["inalámbrico", "cancelación de ruido", "in-ear", "apple", "audio espacial"]
+    },
+    {
+      "id": "prod_005",
+      "name": "Samsung Galaxy Buds2 Pro",
+      "category": "audífonos",
+      "brand": "Samsung",
+      "price": 149.99,
+      "currency": "USD",
+      "description": "Audífonos in-ear inalámbricos con cancelación de ruido inteligente, audio Hi-Fi 24bit, detección automática al ponerse, integración con dispositivos Galaxy.",
+      "tags": ["inalámbrico", "cancelación de ruido", "in-ear", "samsung", "hi-fi"]
+    },
+    {
+      "id": "prod_006",
+      "name": "Logitech MX Master 3S",
+      "category": "mouse",
+      "brand": "Logitech",
+      "price": 99.99,
+      "currency": "USD",
+      "description": "Mouse inalámbrico ergonómico para productividad, rueda de desplazamiento MagSpeed silenciosa, 8000 DPI, conexión Bluetooth y USB-C, compatible con Windows y macOS.",
+      "tags": ["inalámbrico", "ergonómico", "productividad", "bluetooth", "silencioso"]
+    },
+    {
+      "id": "prod_007",
+      "name": "Razer DeathAdder V3",
+      "category": "mouse",
+      "brand": "Razer",
+      "price": 69.99,
+      "currency": "USD",
+      "description": "Mouse gaming ultraligero con cable, sensor Focus Pro 30000 DPI, forma ergonómica asimétrica, switches ópticos de 90 millones de clics, ideal para FPS.",
+      "tags": ["gaming", "ultraligero", "alta precisión", "fps", "ergonómico"]
+    },
+    {
+      "id": "prod_008",
+      "name": "Keychron K2 Pro",
+      "category": "teclado",
+      "brand": "Keychron",
+      "price": 89.99,
+      "currency": "USD",
+      "description": "Teclado mecánico compacto 75% inalámbrico con switches hot-swappable, retroiluminación RGB, compatible con Mac y Windows, conectividad Bluetooth 5.1 o USB-C.",
+      "tags": ["mecánico", "inalámbrico", "compacto", "rgb", "hot-swap"]
+    },
+    {
+      "id": "prod_009",
+      "name": "Logitech MX Keys Mini",
+      "category": "teclado",
+      "brand": "Logitech",
+      "price": 79.99,
+      "currency": "USD",
+      "description": "Teclado inalámbrico compacto para productividad, teclas esféricas con retroiluminación inteligente, batería de 10 días, conexión con hasta 3 dispositivos simultáneos.",
+      "tags": ["inalámbrico", "compacto", "productividad", "minimalista", "bluetooth"]
+    },
+    {
+      "id": "prod_010",
+      "name": "Dell UltraSharp U2723QE",
+      "category": "monitor",
+      "brand": "Dell",
+      "price": 449.99,
+      "currency": "USD",
+      "description": "Monitor 4K 27 pulgadas IPS con hub USB-C 90W, cobertura 100% sRGB, certificación ENERGY STAR, ideal para diseñadores y desarrolladores que necesitan color preciso.",
+      "tags": ["4k", "27 pulgadas", "usb-c", "diseño", "color preciso"]
+    },
+    {
+      "id": "prod_011",
+      "name": "LG 27GP850-B",
+      "category": "monitor",
+      "brand": "LG",
+      "price": 299.99,
+      "currency": "USD",
+      "description": "Monitor gaming 27 pulgadas QHD 165Hz, panel Nano IPS, 1ms de respuesta, compatible con NVIDIA G-Sync y AMD FreeSync Premium, ideal para gaming competitivo.",
+      "tags": ["gaming", "165hz", "qhd", "1ms", "g-sync"]
+    },
+    {
+      "id": "prod_012",
+      "name": "Anker 737 Power Bank",
+      "category": "cargadores",
+      "brand": "Anker",
+      "price": 85.99,
+      "currency": "USD",
+      "description": "Power bank 24000mAh con carga bidireccional 140W, pantalla LED de estado, carga 3 dispositivos simultáneamente, compatible con laptops, tablets y smartphones.",
+      "tags": ["power bank", "140w", "laptop", "carga rápida", "alta capacidad"]
+    }
+  ]

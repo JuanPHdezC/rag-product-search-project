@@ -1,0 +1,22 @@
+# Entorno virtual
+venv/
+.venv/
+
+# Variables de entorno con secrets
+.env
+
+# ChromaDB data
+data/vectorstore/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# IDEs
+.vscode/
+.idea/
+
+# OS
+.DS_Store
