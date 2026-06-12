@@ -490,6 +490,118 @@ Gemini 503:
 - ¿Cómo se estructura un job de re-indexación automática con Airflow?
 - ¿Cómo se escriben tests unitarios con mocks para este pipeline?
 
+---
+
+### Iteración 002 — Observabilidad con LangFuse
+
+**Fecha:** 2026
+**Rama:** `feature/langfuse-observability`
+**Estado:** 🚧 en progreso
+
+#### Decisión de qué implementar primero y por qué
+
+Se evaluaron tres opciones del backlog técnico de prioridad 🔴 Alta:
+- Tests unitarios con pytest
+- Evaluación con RAGAs
+- Observabilidad con LangFuse
+
+**Se eligió LangFuse primero** por las siguientes razones:
+
+1. **Visibilidad antes que validación.** Sin observabilidad se trabaja a ciegas. No se sabe cuánto tarda cada etapa, qué prompt exacto recibe Gemini, ni cuántos tokens consume cada request. LangFuse resuelve esto inmediatamente sobre el pipeline existente.
+
+2. **Baseline para medir mejoras futuras.** Cuando se implemente re-ranking, hybrid search o el carrito inteligente, LangFuse permitirá comparar latencia y calidad antes vs después con datos reales en lugar de intuición.
+
+3. **Los tests se escriben mejor con contexto.** Para mockear correctamente los servicios se necesita entender el flujo exacto de cada llamada. LangFuse da ese entendimiento visual primero.
+
+4. **Orden lógico de madurez de un sistema ML en producción:** primero observas → luego mides → luego proteges → luego mejoras.
+
+**Orden definitivo del backlog técnico:**
+```
+1. LangFuse        → observar
+2. RAGAs           → medir calidad
+3. pytest + mocks  → proteger
+4. Re-ranking      → mejorar con datos reales
+```
+
+#### Qué es LangFuse y por qué existe
+
+Los LLMs en producción tienen un problema que no existe en software tradicional: **no puedes hacer `print` de lo que está pasando**.
+
+En un endpoint REST clásico puedes loggear cada paso y entender el flujo. En un pipeline RAG con LLMs el problema es más profundo:
+
+- ¿Qué prompt exacto le llegó a Gemini?
+- ¿Cuántos tokens consumió?
+- ¿Cuánto tardó el embedding vs la búsqueda vs la generación?
+- ¿Qué productos recuperó ChromaDB para esa consulta específica?
+- ¿El usuario consideró útil la respuesta?
+
+LangFuse es la herramienta estándar de la industria para responder estas preguntas. Es el equivalente a un APM (Application Performance Monitor) pero diseñado específicamente para pipelines LLM.
+
+**Conceptos clave de LangFuse:**
+
+| Concepto | Qué es | Analogía |
+|---|---|---|
+| **Trace** | Registro completo de un request de principio a fin | Un request en un APM clásico |
+| **Span** | Una etapa dentro del trace (embedding, búsqueda, generación) | Una función trackeada |
+| **Generation** | Span específico para llamadas a LLMs — trackea tokens y costo | Span especializado |
+| **Score** | Evaluación de calidad de un trace (manual o automática) | Métrica de calidad |
+| **Session** | Agrupación de traces de un mismo usuario/conversación | Sesión de usuario |
+
+**Cómo se verá nuestro pipeline en LangFuse:**
+
+```
+Trace: POST /api/v1/search
+├── Span: embed_query          (latencia: ~200ms)
+│   └── input: "audífonos inalámbricos..."
+│   └── output: [0.023, -0.041, ...] 384 dims
+├── Span: vector_search        (latencia: ~50ms)
+│   └── input: embedding + filtros
+│   └── output: 5 productos con scores
+└── Generation: gemini_generate (latencia: ~2000ms, tokens: 450)
+    └── input: prompt completo con productos
+    └── output: respuesta final
+    └── costo: $0.000X
+```
+
+#### Qué se va a construir
+
+- Integración de LangFuse SDK en el pipeline existente
+- Traces automáticos por cada request al endpoint `/search`
+- Spans para cada etapa: embedding, búsqueda, generación
+- Logging de tokens, latencia y costo por llamada a Gemini
+- Dashboard en LangFuse Cloud (capa gratuita)
+- Variables de entorno para habilitar/deshabilitar tracing
+
+#### Qué reutiliza del pipeline actual
+
+Todo. LangFuse se integra como una capa de instrumentación que envuelve los servicios existentes sin modificar su lógica. Es el patrón **Decorator** aplicado a observabilidad.
+
+#### Qué es nuevo
+
+- `app/core/telemetry.py` — cliente LangFuse singleton
+- Decoradores/wrappers de tracing en `SearchService`
+- Variables de entorno: `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`
+
+#### Preguntas abiertas al inicio de la iteración
+
+- ¿LangFuse se integra mejor como decorator o como context manager?
+- ¿Cómo evitamos que el tracing agregue latencia perceptible?
+- ¿Cómo manejamos el tracing en modo test para no enviar datos reales?
+- ¿Qué scores automáticos podemos configurar desde el inicio?
+
+---
+
+#### Errores encontrados y resueltos
+
+*(se completa durante la implementación)*
+
+#### Conceptos aprendidos
+
+*(se completa durante la implementación)*
+
+#### Resultados
+
+*(se completa durante la implementación)*
 
 ---
 
@@ -817,4 +929,4 @@ Mejoras de ingeniería al pipeline existente, separadas del roadmap de features 
 | 🟢 Baja | Job de re-indexación automática | Pipelines de datos en producción |
 | 🟢 Baja | Fine-tuning del modelo de embeddings | ML avanzado específico de dominio |
 
-*Última actualización: Iteración 001 — Roadmap de features agregado*
+*Última actualización: Iteración 002 en progreso — LangFuse*
