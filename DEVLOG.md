@@ -490,21 +490,331 @@ Gemini 503:
 - ¿Cómo se estructura un job de re-indexación automática con Airflow?
 - ¿Cómo se escriben tests unitarios con mocks para este pipeline?
 
+
 ---
 
-## Próximos pasos — Backlog de mejoras
+## Roadmap de features
+
+Nuevas capacidades de producto organizadas por complejidad técnica y valor de aprendizaje. Cada feature documenta qué reutiliza del pipeline actual, qué es nuevo, y en qué etapas se requiere ingeniería clásica, ML tradicional o AI con LLM.
+
+---
+
+### Criterio: Ingeniería vs ML vs AI/LLM
+
+Regla fundamental antes de elegir cualquier tecnología:
+
+> Usa el componente más simple que resuelve el problema.
+> Nunca uses un LLM donde un `if` es suficiente.
+
+```
+INGENIERÍA CLÁSICA
+├── El problema tiene reglas explícitas y estables
+├── Puedo escribir los if/else y cubrir todos los casos
+└── Ejemplos: validación, filtros, CRUD, routing determinista
+
+ML TRADICIONAL
+├── El problema tiene patrones en datos históricos
+├── Las reglas son demasiado complejas para escribir a mano
+├── No necesito que el sistema "entienda" lenguaje natural
+└── Ejemplos: clasificación, regresión, clustering, collaborative filtering
+
+AI CON LLM
+├── El problema requiere entender lenguaje natural o imágenes
+├── Necesito razonamiento sobre contexto variable y ambiguo
+├── Las reglas no se pueden escribir explícitamente
+└── Ejemplos: intención del usuario, generación de respuestas, 
+    razonamiento multi-paso, estructuración de texto ruidoso
+```
+
+Este criterio debe aplicarse etapa por etapa dentro de cada feature, no a la feature completa. Un mismo pipeline puede tener etapas de ingeniería, ML y LLM — cada una justificada por separado.
+
+---
+
+### Feature 1 — Carrito Inteligente
+
+**Descripción:**
+Agente RAG que construye un carrito de compras optimizado a partir del objetivo del usuario en lenguaje natural, su perfil, historial y contexto de la app. Combina búsqueda semántica, personalización, optimización y generación de lenguaje natural en un solo pipeline.
+
+**Casos de uso:**
+- "Armar el mercado semanal para una familia de 4 con 2 niños"
+- "Ingredientes para hacer un almuerzo de cumpleaños para 20 personas"
+- "Productos para pasar una gripa en casa"
+- "Snacks saludables para llevar al colegio esta semana"
+- "Mercado del mes con presupuesto de $150.000"
+
+**Por qué es Agentic RAG y no RAG simple:**
+
+```
+RAG simple (lo que tenemos hoy)
+────────────────────────────────
+1 consulta → 1 búsqueda → 1 respuesta
+
+Agentic RAG (carrito inteligente)
+────────────────────────────────
+objetivo del usuario
+    ↓
+agente descompone en sub-objetivos:
+    ├── proteínas
+    ├── lácteos
+    ├── frutas y verduras
+    ├── snacks
+    └── limpieza del hogar
+    ↓
+búsqueda semántica independiente por cada categoría
+    ↓
+filtros por perfil (presupuesto, descuentos, vencimientos, preferencias)
+    ↓
+optimización del carrito (balance nutricional, precio, stock)
+    ↓
+carrito final con justificación en lenguaje natural
+```
+
+**Capabilities incluidos:**
+
+*1. Armado desde objetivo en lenguaje natural*
+El usuario describe su objetivo. El agente infiere categorías, cantidades aproximadas y restricciones implícitas.
+
+*2. Personalización por perfil*
+La app conoce al usuario: composición del hogar (soltero, pareja, hijos, mascotas), preferencias alimentarias, marcas favoritas, método de pago, dirección de entrega.
+
+*3. Optimización por contexto*
+El agente considera: productos con descuento activo, productos próximos a vencer (precio reducido), stock disponible, historial de compras previas del usuario.
+
+*4. Re-orden inteligente*
+"Volver a pedir lo de la semana pasada" con ajustes automáticos por disponibilidad y precio.
+
+*5. Sustitución automática*
+Si un producto no está disponible o excede el presupuesto, el agente sugiere el sustituto más similar semánticamente.
+
+*6. Carrito desde lista física (OCR)*
+El usuario fotografía su lista de mercado escrita a mano. OCR extrae los ítems. El agente construye el carrito.
+
+```
+foto de lista manuscrita
+         ↓ OCR (Gemini Vision)
+    "leche, pan, huevos, jabón rey"
+         ↓ LLM normaliza y estructura
+    ["leche entera 1L", "pan tajado", "huevos x12", "jabón loza"]
+         ↓ búsqueda semántica por cada ítem
+    productos más relevantes del catálogo
+         ↓ agente optimiza por precio y disponibilidad
+    carrito final
+```
+
+*7. Carrito desde recibo anterior (OCR)*
+El usuario sube foto de un tiquete de caja anterior. OCR extrae productos y precios. El sistema re-arma el carrito con productos equivalentes disponibles hoy.
+
+**Qué reutiliza del pipeline actual:**
+- `EmbeddingService` — embeddings por cada sub-búsqueda
+- `VectorStoreRepository` — búsqueda semántica con filtros
+- `GeminiService` — razonamiento y generación de respuesta
+- `SearchService` — se extiende o se crea un `CartService` que lo orquesta
+
+**Qué es nuevo:**
+- `AgentService` — orquestador multi-paso con tool calling
+- `UserProfileRepository` — perfil y historial del usuario
+- `CartRepository` — persistencia del carrito
+- `OCRService` — extracción de texto desde imágenes
+- Base de datos relacional para usuarios y carritos (PostgreSQL)
+- Gestión de estado entre pasos del agente
+
+**Criterio por etapa:**
+
+| Etapa | Tipo | Justificación |
+|---|---|---|
+| Autenticación y perfil del usuario | Ingeniería | CRUD, reglas explícitas de negocio |
+| Parsear objetivo del usuario | AI/LLM | Lenguaje natural, intención ambigua |
+| Descomponer objetivo en categorías | AI/LLM | Razonamiento multi-paso sobre contexto variable |
+| Búsqueda semántica por categoría | ML | Embeddings + ANN, igual que hoy |
+| Filtros por presupuesto y descuentos | Ingeniería | Reglas explícitas: `price <= budget` |
+| Filtros por fecha de vencimiento | Ingeniería | Comparación de fechas, regla explícita |
+| Sustitución de productos no disponibles | ML | Similitud semántica sobre el catálogo |
+| Optimización del carrito | Ingeniería o ML | Si las reglas son simples → ingeniería. Si hay múltiples objetivos en tensión → optimización ML |
+| OCR de lista o recibo | ML | Modelo de visión (Gemini Vision / Tesseract) |
+| Normalización del texto OCR | AI/LLM | El texto crudo del OCR es ruidoso, el LLM estructura |
+| Validación del output estructurado | Ingeniería | Pydantic, reglas explícitas |
+| Generación de justificación del carrito | AI/LLM | Requiere lenguaje natural coherente |
+| Persistencia del carrito | Ingeniería | Base de datos, sin IA |
+
+**Conceptos que enseña:**
+- Agentic RAG y orquestación multi-paso
+- Tool calling con LLMs
+- Gestión de estado en agentes
+- OCR y procesamiento de imágenes
+- Optimización multi-objetivo
+- Personalización y contexto de usuario
+- Integración de base de datos relacional con vector store
+
+**Dificultad:** Alta
+**Prioridad:** 🔴 Feature principal del roadmap
+
+---
+
+### Feature 2 — Sistema de Recomendaciones Personalizadas
+
+**Descripción:**
+Motor de recomendaciones basado en comportamiento del usuario. "Usuarios que compraron X también compraron Y." Complementa el carrito inteligente con sugerencias proactivas.
+
+**Casos de uso:**
+- Recomendaciones en homepage basadas en historial
+- "Completa tu carrito" — productos frecuentemente comprados juntos
+- Recomendaciones post-compra
+- "Te puede interesar" basado en búsquedas recientes
+
+**Criterio por etapa:**
+
+| Etapa | Tipo | Justificación |
+|---|---|---|
+| Tracking de eventos (vistas, clicks, compras) | Ingeniería | Log de eventos, base de datos |
+| Collaborative filtering | ML tradicional | Matrix factorization — no necesita LLM |
+| Embeddings de comportamiento del usuario | ML | Vector que representa patrones de compra |
+| Búsqueda de productos similares al historial | ML | ANN sobre embeddings, igual que hoy |
+| Generación de copy de recomendación | AI/LLM | Solo si necesitas lenguaje natural personalizado |
+| Ranking final de recomendaciones | Ingeniería o ML | Reglas de negocio + score de relevancia |
+
+**Qué reutiliza:** `EmbeddingService`, `VectorStoreRepository`
+**Qué es nuevo:** user embeddings, collaborative filtering, event tracking
+**Conceptos que enseña:** ML tradicional, matrix factorization, behavioral data
+**Dificultad:** Media
+**Prioridad:** 🟡
+
+---
+
+### Feature 3 — Comparador Semántico de Productos
+
+**Descripción:**
+El usuario describe su necesidad y el sistema compara múltiples productos explicando ventajas, desventajas y para quién es ideal cada uno.
+
+**Casos de uso:**
+- "Compara estos 3 audífonos para uso en oficina con videollamadas"
+- "¿Cuál monitor es mejor para diseño gráfico con presupuesto de $400?"
+- "Diferencias entre el teclado mecánico y el de membrana para gaming"
+
+**Criterio por etapa:**
+
+| Etapa | Tipo | Justificación |
+|---|---|---|
+| Recuperación de productos a comparar | ML | Embeddings + ANN |
+| Extracción de atributos comparables | AI/LLM | Estructura variable por categoría |
+| Generación de tabla comparativa | AI/LLM | Razonamiento sobre múltiples documentos |
+| Recomendación final contextualizada | AI/LLM | Depende del perfil y uso declarado |
+
+**Qué reutiliza:** pipeline completo actual
+**Qué es nuevo:** multi-document reasoning, structured output con Pydantic
+**Conceptos que enseña:** RAG sobre múltiples documentos, structured generation
+**Dificultad:** Baja-Media
+**Prioridad:** 🟡
+
+---
+
+### Feature 4 — Detección de Intención y Routing
+
+**Descripción:**
+Clasificar automáticamente qué quiere hacer el usuario y enrutar al pipeline correcto sin que el usuario tenga que elegir explícitamente.
+
+**Casos de uso:**
+```
+"audífonos baratos"           → pipeline de búsqueda
+"compara Sony vs Jabra"       → pipeline de comparación
+"armar mercado semanal"       → pipeline de carrito inteligente
+"quiero lo mismo de la semana pasada" → pipeline de re-orden
+```
+
+**Criterio por etapa:**
+
+| Etapa | Tipo | Justificación |
+|---|---|---|
+| Clasificar intención | ML o AI/LLM | Si las intenciones son pocas y fijas → clasificador ML (más rápido, más barato). Si son abiertas y ambiguas → LLM |
+| Routing al pipeline correcto | Ingeniería | Switch sobre la intención clasificada — regla explícita |
+| Fallback si baja confianza | AI/LLM | El LLM pide clarificación en lenguaje natural |
+
+**Qué reutiliza:** todos los pipelines existentes como herramientas
+**Qué es nuevo:** clasificador de intención, router, orquestador
+**Conceptos que enseña:** intent classification, agentic routing, tool selection
+**Dificultad:** Media
+**Prioridad:** 🟡
+
+---
+
+### Feature 5 — Q&A sobre Productos Específicos
+
+**Descripción:**
+El usuario hace preguntas específicas sobre un producto y el sistema responde basándose en la ficha técnica indexada.
+
+**Casos de uso:**
+- "¿Este teclado es compatible con Mac?"
+- "¿Los AirPods Pro 2 son resistentes al agua?"
+- "¿Cuántas horas de batería tiene el Sony WH-1000XM5 en modo ANC?"
+
+**Criterio por etapa:**
+
+| Etapa | Tipo | Justificación |
+|---|---|---|
+| Identificar producto referenciado | ML | Búsqueda semántica sobre el catálogo |
+| Recuperar ficha técnica completa | Ingeniería | Lookup por id, regla explícita |
+| Responder pregunta sobre la ficha | AI/LLM | Razonamiento sobre documento específico |
+| Citar la fuente de la respuesta | Ingeniería | Extraer el fragmento relevante del documento |
+
+**Qué reutiliza:** `EmbeddingService`, `VectorStoreRepository`, `GeminiService`
+**Qué es nuevo:** cited responses, document-specific RAG
+**Conceptos que enseña:** grounded generation, cited responses, faithfulness
+**Dificultad:** Baja
+**Prioridad:** 🟢 Buena feature de calentamiento antes del carrito
+
+---
+
+### Feature 6 — OCR como Servicio Transversal
+
+**Descripción:**
+Capacidad reutilizable por múltiples features para extraer texto estructurado desde imágenes. No es una feature standalone — es infraestructura compartida.
+
+**Casos de uso por feature:**
+
+| Feature | Entrada | Output esperado |
+|---|---|---|
+| Carrito inteligente | Foto de lista manuscrita | Lista de ítems estructurada |
+| Carrito inteligente | Foto de recibo/tiquete | Productos + precios anteriores |
+| Ingesta de catálogo | PDF de proveedor | JSON de producto normalizado |
+| Comparador | Foto de especificaciones | Atributos técnicos estructurados |
+
+**Stack de OCR — opciones:**
+
+| Herramienta | Tipo | Cuándo usarla |
+|---|---|---|
+| Tesseract | Open source, local | Texto impreso claro, sin costo |
+| Google Cloud Vision | API de pago | Texto manuscrito, alta precisión |
+| Gemini Vision | AI/LLM multimodal | Cuando además de extraer necesitas entender contexto |
+
+**Criterio por etapa:**
+
+| Etapa | Tipo | Justificación |
+|---|---|---|
+| Extracción de texto crudo | ML | Modelo de visión, no hay reglas explícitas para OCR |
+| Normalización y estructuración | AI/LLM | El texto OCR es ruidoso e inconsistente |
+| Validación del JSON resultante | Ingeniería | Pydantic, reglas explícitas |
+| Almacenamiento del resultado | Ingeniería | Base de datos, sin IA |
+
+**Conceptos que enseña:** visión por computadora, multimodal LLMs, pipeline de procesamiento de documentos
+**Dificultad:** Media
+**Prioridad:** 🟡 Requerida por Feature 1
+
+---
+
+## Backlog técnico
+
+Mejoras de ingeniería al pipeline existente, separadas del roadmap de features de producto.
 
 | Prioridad | Mejora | Concepto que enseña |
 |---|---|---|
 | 🔴 Alta | Tests unitarios con pytest y mocks | Testing con DI, mocking de APIs externas |
-| 🔴 Alta | Evaluación de relevancia con Precision@K | Métricas de Information Retrieval |
+| 🔴 Alta | Evaluación de recuperación — Precision@K, Recall@K, NDCG | Métricas de Information Retrieval |
+| 🔴 Alta | Evaluación de generación — Faithfulness, Answer Relevance, Context Precision (RAGAs) | Evaluación de pipelines RAG |
+| 🔴 Alta | Observabilidad con LangFuse — trazas, latencia, costos, feedback | MLOps, monitoreo de LLMs en producción |
 | 🟡 Media | Caché de embeddings para queries frecuentes | Optimización de latencia y costos |
 | 🟡 Media | Re-ranking con cross-encoder | Pipeline RAG avanzado |
-| 🟡 Media | Hybrid search (semántico + BM25) | Técnica usada en producción a escala |
+| 🟡 Media | Hybrid search — semántico + BM25 | Técnica estándar en producción a escala |
 | 🟢 Baja | Containerización con Docker | Deployment estándar de microservicios |
 | 🟢 Baja | Job de re-indexación automática | Pipelines de datos en producción |
 | 🟢 Baja | Fine-tuning del modelo de embeddings | ML avanzado específico de dominio |
 
----
-
-*Última actualización: Iteración 001*
+*Última actualización: Iteración 001 — Roadmap de features agregado*
