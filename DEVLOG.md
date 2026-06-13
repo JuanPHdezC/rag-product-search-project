@@ -593,15 +593,75 @@ Todo. LangFuse se integra como una capa de instrumentación que envuelve los ser
 
 #### Errores encontrados y resueltos
 
-*(se completa durante la implementación)*
+| Error | Causa | Solución |
+|---|---|---|
+| Conflictos de dependencias al instalar LangFuse | LangFuse 4.7.1 requiere OpenTelemetry 1.42.1 pero el entorno tenía 1.27.0 instalado como dependencia transitiva de `google-generativeai` (SDK viejo). Al actualizar OTel se rompió compatibilidad con `opentelemetry-instrumentation-fastapi`, `opentelemetry-exporter-otlp-proto-grpc` y `google-ai-generativelanguage` | Desinstalar los paquetes conflictivos del SDK viejo. Reinstalar `opentelemetry-exporter-otlp-proto-grpc>=1.42.1` compatible con LangFuse. Verificar con `pip check` |
+
+Lección aprendida:
+
+En proyectos Python con múltiples SDKs de IA, los conflictos de OpenTelemetry son comunes porque varios SDKs lo usan como dependencia transitiva con versiones distintas. pip check es el comando correcto para detectarlos. No basta con que la instalación termine sin errores rojos.
 
 #### Conceptos aprendidos
 
-*(se completa durante la implementación)*
+**LangFuse 4.x y OpenTelemetry**
+LangFuse 4.x migró de una API propia (`trace()`, `span()`) a un
+modelo basado en OpenTelemetry. Los spans se crean con
+`start_as_current_observation()` como context managers anidados.
+El span hijo se asocia automáticamente al padre por el contexto
+de OTel — no hay que pasar IDs manualmente.
+
+**Graceful degradation en observabilidad**
+La observabilidad no debe ser un punto de falla del sistema
+principal. Si LangFuse no está disponible, el `observation()`
+context manager actúa como no-op — el pipeline funciona
+exactamente igual. Esto se implementó con un `else: yield`
+en el context manager.
+
+**Análisis de latencia basado en datos reales**
+El primer trace reveló que el 93% de la latencia del pipeline
+viene de Gemini (4.32s de 4.64s totales). embed_query tarda
+~0.25s y vector_search ~0.01s. Conclusión: si se quiere
+optimizar latencia, el único lugar donde vale trabajar es
+en la capa LLM — streaming o caché de respuestas.
+
+**Conflictos de dependencias con OpenTelemetry**
+Múltiples SDKs de IA usan OpenTelemetry como dependencia
+transitiva con versiones incompatibles entre sí. Al instalar
+LangFuse 4.x se actualizó OTel de 1.27.0 a 1.42.1, rompiendo
+`opentelemetry-instrumentation-fastapi` y
+`opentelemetry-exporter-otlp-proto-grpc`. Solución: desinstalar
+los paquetes del SDK viejo y reinstalar las versiones compatibles.
+`pip check` es el comando correcto para detectar estos conflictos.
 
 #### Resultados
 
-*(se completa durante la implementación)*
+```
+Trace: rag_search (trace raíz)
+├── embed_query     ~0.25s  ← sentence-transformers local
+├── vector_search   ~0.01s  ← ChromaDB prácticamente instantáneo  
+└── gemini_generate ~4.50s  ← 93% de la latencia total
+
+Input visible:  query, n_results, price_max, category
+Output visible: ai_response completa de Gemini
+```
+
+Dashboard LangFuse mostrando:
+- Árbol de spans anidados con latencias reales
+- Input y output de cada etapa del pipeline
+- Historial de todos los requests
+
+#### Decisiones tomadas durante la implementación
+
+**`update_current_span()` en lugar de `set_current_trace_io()`**
+`set_current_trace_io()` no actualizaba el output del span raíz
+correctamente en LangFuse 4.x. Se reemplazó por
+`update_current_span()` que sí funciona dentro del context
+manager activo.
+
+**`auth_check()` removido del TelemetryClient**
+Se removió la llamada a `auth_check()` en el constructor porque
+agrega latencia al startup y LangFuse ya maneja errores de
+autenticación internamente con logs claros.
 
 ---
 
@@ -929,4 +989,4 @@ Mejoras de ingeniería al pipeline existente, separadas del roadmap de features 
 | 🟢 Baja | Job de re-indexación automática | Pipelines de datos en producción |
 | 🟢 Baja | Fine-tuning del modelo de embeddings | ML avanzado específico de dominio |
 
-*Última actualización: Iteración 002 en progreso — LangFuse*
+*Última actualización: Iteración 002 completa — LangFuse observabilidad*

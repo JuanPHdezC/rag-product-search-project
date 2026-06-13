@@ -28,11 +28,37 @@ class Settings(BaseSettings):
     app_version: str = "0.1.0"
     debug: bool = False
 
+    # --- LangFuse ---
+    # Optional=True porque queremos que la app funcione aunque
+    # LangFuse no esté configurado, alineando con el mindset de
+    # que la observabilidad no debe ser un punto de falla del 
+    # sistema principal.
+    # En producción es obligatorio, pero para desarrollo
+    # la flexibilidad es más útil.
+    langfuse_public_key: str | None = None
+    langfuse_secret_key: str | None = None
+    langfuse_host: str = "https://cloud.langfuse.com"
+
     model_config = SettingsConfigDict(
         env_file=".env",          # Leer desde este archivo
         env_file_encoding="utf-8",
         case_sensitive=False,     # GEMINI_API_KEY == gemini_api_key
     )
+
+    @property
+    def langfuse_enabled(self) -> bool:
+        """
+        LangFuse está habilitado solo si ambas keys están presentes.
+
+        Por qué property y no campo:
+        Es lógica derivada de otros campos, por lo tanto no viene 
+        del .env directamente. Una property mantiene esa lógica 
+        encapsulada en el modelo de configuración donde pertenece.
+        """
+        return (
+            self.langfuse_public_key is not None
+            and self.langfuse_secret_key is not None
+        )
 
 
 # Instancia singleton (se importa desde cualquier módulo)

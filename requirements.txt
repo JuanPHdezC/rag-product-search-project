@@ -16,5 +16,9 @@ chromadb>=0.5.1
 # LLM - Gemini
 google-genai>=1.0.0
 
+# Observabilidad
+langfuse>=2.0.0
+opentelemetry-exporter-otlp-proto-grpc>=1.42.1
+
 # Utilidades
 httpx==0.27.0
