@@ -66,9 +66,7 @@ Bitácora técnica del proyecto. Documenta decisiones de arquitectura, conceptos
 | Para CV / entrevistas | Más cercano a producción real | Más académico/research |
 | Curva de aprendizaje | Baja | Media |
 
-ChromaDB replica mejor el patrón que usan sistemas como el de
-Mercado Libre, donde cada producto tiene metadata (precio, categoría)
-y puedes filtrar por ella además de buscar por similitud.
+ChromaDB replica mejor el patrón que usan sistemas como el de Mercado Libre, donde cada producto tiene metadata (precio, categoría) y puedes filtrar por ella además de buscar por similitud.
 
 ### `google-genai` vs `google-generativeai`
 
@@ -82,8 +80,7 @@ import google.generativeai as genai
 from google import genai
 ```
 
-El SDK nuevo soporta Gemini 2.0, 2.5, 3.x y todos los modelos futuros. El viejo quedó congelado en Gemini 1.x. Para un proyecto que quiere mostrar stack actualizado, `google-genai` es la elección
-correcta. Cambiar de modelo es solo una variable de entorno, demostrando una arquitectura bien desacoplada.
+El SDK nuevo soporta Gemini 2.0, 2.5, 3.x y todos los modelos futuros. El viejo quedó congelado en Gemini 1.x. Para un proyecto que quiere mostrar stack actualizado, `google-genai` es la elección correcta. Cambiar de modelo es solo una variable de entorno, demostrando una arquitectura bien desacoplada.
 
 ### Patrones de diseño aplicados
 
@@ -93,6 +90,44 @@ correcta. Cambiar de modelo es solo una variable de entorno, demostrando una arq
 | Factory + lru_cache | `get_embedding_service()`, `get_gemini_service()`, `get_vector_store()` | Singleton moderno y testeable. El modelo de 90MB se carga una vez. |
 | Dependency Injection | `SearchService.__init__()`, `Depends()` en endpoints | Testabilidad sin cargar modelos reales ni llamar APIs externas. |
 | Layered Architecture | `endpoints → services → repositories` | Cada capa conoce solo la inmediatamente inferior. Cambios aislados por capa. |
+
+### Convenciones de Git workflow
+
+Reglas operativas adoptadas durante el desarrollo del proyecto. No son decisiones de arquitectura del software, pero sí decisiones de ingeniería que afectan la mantenibilidad del repositorio.
+
+**Estrategia de ramas:**
+
+```
+main      → código estable, "producción"
+develop   → integración de iteraciones completas
+feature/* → una rama por iteración del DEVLOG
+```
+
+**Commits directos a `develop` vs Pull Request:**
+
+| Tipo de cambio | Flujo |
+|---|---|
+| Código (features, fixes, refactors) | `feature/*` → PR → `develop` |
+| Documentación menor (DEVLOG, README, typos) | Commit directo a `develop` |
+
+La diferencia: el código necesita revisión porque afecta comportamiento del sistema. La documentación no — bloquear un typo detrás de un PR agrega fricción sin agregar valor.
+
+**Limpieza de ramas después de merge:**
+
+```bash
+git checkout develop
+git pull origin develop
+git branch -d feature/nombre-de-la-rama          # borra local
+git push origin --delete feature/nombre-de-la-rama  # borra remoto
+```
+
+`git branch -d` solo borra el puntero local — los commits permanecen en `develop` a través del merge commit, nada se pierde. `git push origin --delete` borra el mismo puntero en GitHub.
+
+**Por qué se borran las ramas feature después de mergear:**
+- Una rama feature representa trabajo en progreso de UNA tarea. Una vez mergeada, su propósito se cumplió.
+- Mantener ramas viejas genera ambigüedad: ¿está activa o ya se mergeó? ¿debo seguir trabajando ahí?
+- Es la convención por defecto en GitHub/GitLab/Bitbucket — ambos sugieren "Delete branch" automáticamente tras el merge.
+- Excepción: ramas de release o de entornos (`staging`,`production`) sí se mantienen como permanentes por diseño.
 
 ---
 
@@ -652,6 +687,89 @@ Se removió la llamada a `auth_check()` en el constructor porque agrega latencia
 
 ---
 
+### Iteración 003 — Evaluación de calidad con RAGAs
+
+**Fecha:** 2026
+**Rama:** `feature/ragas-evaluation`
+**Estado:** 🚧 en progreso
+
+#### Por qué esta iteración y por qué ahora
+
+Con LangFuse ya tenemos visibilidad de **latencia y costos**, pero no de **calidad**. Sabemos cuánto tarda cada etapa, pero no sabemos:
+
+- ¿Los productos que recupera ChromaDB son realmente los más relevantes?
+- ¿Gemini está inventando información o se basa solo en los productos recuperados?
+- ¿La respuesta generada realmente responde la consulta del usuario?
+
+RAGAs (Retrieval-Augmented Generation Assessment) es el framework estándar de la industria para responder estas preguntas de forma automática y reproducible.
+
+#### Qué es RAGAs y por qué existe
+
+RAGAs evalúa un pipeline RAG en las dos fases que lo componen, cada una con sus propias métricas:
+
+```
+FASE RETRIEVAL                    FASE GENERATION
+───────────────                   ────────────────
+Context Precision                 Faithfulness
+└─ ¿los productos recuperados     └─ ¿la respuesta se basa SOLO
+   son relevantes para la             en los productos recuperados,
+   consulta?                          o Gemini inventó algo?
+
+Context Recall                    Answer Relevance
+└─ ¿se recuperó TODA la            └─ ¿la respuesta realmente
+   información relevante               contesta la pregunta del
+   disponible?                          usuario?
+```
+
+**Diferencia clave con las métricas de IR clásicas (Precision@K, NDCG):**
+
+```
+Precision@K / NDCG          RAGAs
+───────────────────         ─────────────────────
+Requieren un dataset         Usan un LLM como "juez"
+anotado manualmente con      para evaluar relevancia
+relevancia ground-truth       sin necesitar anotación manual
+(qué productos SON            previa — más rápido de
+relevantes para cada query)   implementar, pero el juez
+                               puede tener sesgos propios
+```
+
+Para este proyecto, con un catálogo de solo 12 productos, anotar manualmente un dataset de evaluación es viable Y valioso. Por eso se complementará RAGAs con un dataset pequeño anotado a mano. Esto da lo mejor de ambos enfoques.
+
+#### Cómo encaja con LangFuse
+
+Las dos preguntas trasladadas de la Iteración 002 se resuelven aquí:
+
+- **"¿Qué scores automáticos configurar?"** → Los scores de RAGAs (faithfulness, answer_relevance, context_precision) se enviarán a LangFuse con `create_score()`, asociados al trace de cada request. Esto permite ver en el dashboard no solo latencia sino también calidad — por trace individual y como tendencia agregada.
+
+#### Qué se va a construir
+
+- Dataset de evaluación: 10-15 consultas con productos relevantes anotados manualmente (ground truth)
+- Script `scripts/evaluate_rag.py` que corre RAGAs sobre el dataset
+- Métricas: Faithfulness, Answer Relevance, Context Precision, Context Recall
+- Envío de scores a LangFuse asociados a cada trace de evaluación
+- Reporte de resultados en markdown
+
+#### Qué reutiliza del pipeline actual
+
+- `SearchService.search()` — se ejecuta tal cual para generar los resultados a evaluar
+- `TelemetryClient` — para enviar los scores a LangFuse
+
+#### Qué es nuevo
+
+- `data/eval/golden_dataset.json` — dataset anotado de evaluación
+- `scripts/evaluate_rag.py` — pipeline de evaluación
+- Dependencia nueva: `ragas`
+
+#### Preguntas abiertas al inicio de la iteración
+
+- ¿RAGAs necesita un LLM propio para evaluar, o reutiliza Gemini?
+- ¿Cómo se construye un "golden dataset" de forma metodológicamente correcta?
+- ¿Qué umbral de cada métrica se considera "aceptable" para este caso de uso?
+- ¿Cómo se interpretan resultados cuando el catálogo es pequeño (12 productos)?
+
+---
+
 ## Roadmap de features
 
 Nuevas capacidades de producto organizadas por complejidad técnica y valor de aprendizaje. Cada feature documenta qué reutiliza del pipeline actual, qué es nuevo, y en qué etapas se requiere ingeniería clásica, ML tradicional o AI con LLM.
@@ -980,4 +1098,4 @@ Mejoras de ingeniería al pipeline existente, separadas del roadmap de features 
 | 🟢 Baja | Job de re-indexación automática | Pipelines de datos en producción |
 | 🟢 Baja | Fine-tuning del modelo de embeddings | ML avanzado específico de dominio |
 
-*Última actualización: Iteración 002 completa — LangFuse observabilidad + resolución de preguntas abiertas*
+*Última actualización: Iteración 003 en progreso — Evaluación con RAGAs*
