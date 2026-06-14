@@ -582,12 +582,16 @@ Todo. LangFuse se integra como una capa de instrumentación que envuelve los ser
 - Decoradores/wrappers de tracing en `SearchService`
 - Variables de entorno: `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`
 
-#### Preguntas abiertas al inicio de la iteración
+#### Preguntas abiertas al inicio de la iteración — resolución
 
-- ¿LangFuse se integra mejor como decorator o como context manager?
-- ¿Cómo evitamos que el tracing agregue latencia perceptible?
-- ¿Cómo manejamos el tracing en modo test para no enviar datos reales?
-- ¿Qué scores automáticos podemos configurar desde el inicio?
+| Pregunta | Estado | Resolución |
+|---|---|---|
+| ¿Decorator o context manager? | ✅ Resuelta | Context manager — permite spans anidados dentro de un mismo método. Ver Conceptos aprendidos. |
+| ¿Cómo evitar latencia perceptible del tracing? | ⚠️ Parcial | LangFuse es asíncrono por diseño (estructuralmente despreciable). Falta medición A/B explícita. |
+| ¿Tracing en modo test sin enviar datos reales? | ➡️ Trasladada | Se resolverá en la iteración de tests unitarios (pytest + mocks) |
+| ¿Qué scores automáticos configurar? | ➡️ Trasladada | Se resolverá en la iteración de evaluación con RAGAs |
+
+**Lección de proceso:** no toda pregunta abierta se resuelve en la misma iteración donde se planteó. Algunas son semillas para iteraciones futuras. Se trasladan explícitamente a la iteración donde tienen sentido natural, en lugar de forzar una respuesta prematura o dejarlas huérfanas.
 
 ---
 
@@ -604,34 +608,22 @@ En proyectos Python con múltiples SDKs de IA, los conflictos de OpenTelemetry s
 #### Conceptos aprendidos
 
 **LangFuse 4.x y OpenTelemetry**
-LangFuse 4.x migró de una API propia (`trace()`, `span()`) a un
-modelo basado en OpenTelemetry. Los spans se crean con
-`start_as_current_observation()` como context managers anidados.
-El span hijo se asocia automáticamente al padre por el contexto
-de OTel — no hay que pasar IDs manualmente.
+LangFuse 4.x migró de una API propia (`trace()`, `span()`) a un modelo basado en OpenTelemetry. Los spans se crean con `start_as_current_observation()` como context managers anidados. El span hijo se asocia automáticamente al padre por el contexto de OTel (no hay que pasar IDs manualmente).
 
 **Graceful degradation en observabilidad**
-La observabilidad no debe ser un punto de falla del sistema
-principal. Si LangFuse no está disponible, el `observation()`
-context manager actúa como no-op — el pipeline funciona
-exactamente igual. Esto se implementó con un `else: yield`
-en el context manager.
+La observabilidad no debe ser un punto de falla del sistema principal. Si LangFuse no está disponible, el `observation()` context manager actúa como no-op — el pipeline funciona exactamente igual. Esto se implementó con un `else: yield` en el context manager.
 
 **Análisis de latencia basado en datos reales**
-El primer trace reveló que el 93% de la latencia del pipeline
-viene de Gemini (4.32s de 4.64s totales). embed_query tarda
-~0.25s y vector_search ~0.01s. Conclusión: si se quiere
-optimizar latencia, el único lugar donde vale trabajar es
-en la capa LLM — streaming o caché de respuestas.
+El primer trace reveló que el 93% de la latencia del pipeline viene de Gemini (4.32s de 4.64s totales). embed_query tarda ~0.25s y vector_search ~0.01s. Conclusión: si se quiere optimizar latencia, el único lugar donde vale trabajar es en la capa LLM — streaming o caché de respuestas.
 
 **Conflictos de dependencias con OpenTelemetry**
-Múltiples SDKs de IA usan OpenTelemetry como dependencia
-transitiva con versiones incompatibles entre sí. Al instalar
-LangFuse 4.x se actualizó OTel de 1.27.0 a 1.42.1, rompiendo
-`opentelemetry-instrumentation-fastapi` y
-`opentelemetry-exporter-otlp-proto-grpc`. Solución: desinstalar
-los paquetes del SDK viejo y reinstalar las versiones compatibles.
-`pip check` es el comando correcto para detectar estos conflictos.
+Múltiples SDKs de IA usan OpenTelemetry como dependencia transitiva con versiones incompatibles entre sí. Al instalar LangFuse 4.x se actualizó OTel de 1.27.0 a 1.42.1, rompiendo `opentelemetry-instrumentation-fastapi` y `opentelemetry-exporter-otlp-proto-grpc`. Solución: desinstalar los paquetes del SDK viejo y reinstalar las versiones compatibles. `pip check` es el comando correcto para detectar estos conflictos.
+
+**Por qué context manager y no decorator**
+Se evaluaron ambas opciones para integrar LangFuse. Un decorator es ideal cuando quieres instrumentar una función completa como una unidad ("toda esta función es un span"). Pero para este caso de uso, el pipeline necesita spans anidados *dentro* del mismo método `search()`: embed_query, vector_search y gemini_generate son tres spans hijos de un mismo trace raíz, todos dentro de una sola función. Un decorator solo podría envolver `search()` completo como un único span; perderíamos el desglose por etapa, que es justo lo que permitió descubrir que el 93% de la latencia viene de Gemini. El context manager permite anidar spans con el nivel de granularidad que necesitamos.
+
+**Overhead de latencia del tracing**
+LangFuse envía los eventos a su backend de forma asíncrona. El SDK no bloquea el pipeline esperando confirmación de que el trace fue recibido. Los eventos se acumulan en memoria y se envían en batches, con `flush()` garantizando el envío final en el shutdown. No se hizo una medición A/B explícita (mismo request con y sin LangFuse), pero el diseño asíncrono es la garantía estructural de que el overhead es despreciable frente a los ~4.5s que toma Gemini. Validar esto con métricas reales queda como mejora futura.
 
 #### Resultados
 
@@ -653,15 +645,10 @@ Dashboard LangFuse mostrando:
 #### Decisiones tomadas durante la implementación
 
 **`update_current_span()` en lugar de `set_current_trace_io()`**
-`set_current_trace_io()` no actualizaba el output del span raíz
-correctamente en LangFuse 4.x. Se reemplazó por
-`update_current_span()` que sí funciona dentro del context
-manager activo.
+`set_current_trace_io()` no actualizaba el output del span raíz correctamente en LangFuse 4.x. Se reemplazó por `update_current_span()` que sí funciona dentro del context manager activo.
 
 **`auth_check()` removido del TelemetryClient**
-Se removió la llamada a `auth_check()` en el constructor porque
-agrega latencia al startup y LangFuse ya maneja errores de
-autenticación internamente con logs claros.
+Se removió la llamada a `auth_check()` en el constructor porque agrega latencia al startup y LangFuse ya maneja errores de autenticación internamente con logs claros.
 
 ---
 
@@ -976,6 +963,10 @@ Capacidad reutilizable por múltiples features para extraer texto estructurado d
 
 Mejoras de ingeniería al pipeline existente, separadas del roadmap de features de producto.
 
+> 📌 **Preguntas heredadas de iteraciones previas:**
+> - *Tests (pytest)*: ¿cómo manejar el tracing de LangFuse en modo test para no enviar datos reales? (origen: Iteración 002)
+> - *Evaluación (RAGAs)*: ¿qué scores automáticos de LangFuse configurar desde el inicio? (origen: Iteración 002)
+
 | Prioridad | Mejora | Concepto que enseña |
 |---|---|---|
 | 🔴 Alta | Tests unitarios con pytest y mocks | Testing con DI, mocking de APIs externas |
@@ -989,4 +980,4 @@ Mejoras de ingeniería al pipeline existente, separadas del roadmap de features 
 | 🟢 Baja | Job de re-indexación automática | Pipelines de datos en producción |
 | 🟢 Baja | Fine-tuning del modelo de embeddings | ML avanzado específico de dominio |
 
-*Última actualización: Iteración 002 completa — LangFuse observabilidad*
+*Última actualización: Iteración 002 completa — LangFuse observabilidad + resolución de preguntas abiertas*
