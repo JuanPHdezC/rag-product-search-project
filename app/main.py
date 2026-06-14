@@ -70,11 +70,13 @@ Pipeline de búsqueda semántica de productos usando:
         # Pre-cargar el modelo de embeddings y el cliente Gemini
         # al arrancar en lugar de esperar al primer request
         from app.api.dependencies import get_vector_store
+        from app.core.telemetry import get_telemetry_client
         from app.services.embedding_service import get_embedding_service
         from app.services.gemini_service import get_gemini_service
 
         get_embedding_service()
         get_gemini_service()
+        telemetry = get_telemetry_client()
         vector_store = get_vector_store()
 
         count = vector_store.count()
@@ -90,11 +92,21 @@ Pipeline de búsqueda semántica de productos usando:
             )
         else:
             logger.info("✅ Servicios listos | %d productos indexados", count)
+        
+        if telemetry.is_enabled:
+            logger.info("✅ LangFuse activo | observabilidad habilitada")
+        else:
+            logger.warning("⚠️  LangFuse no configurado | sin observabilidad")
 
 
     @app.on_event("shutdown")
     async def shutdown_event() -> None:
         logger.info("🛑 Apagando %s", settings.app_name)
+
+        # Flush garantiza que ningún trace pendiente se pierda
+        # durante el shutdown de la aplicación
+        from app.core.telemetry import get_telemetry_client
+        get_telemetry_client().flush()
 
     return app
 

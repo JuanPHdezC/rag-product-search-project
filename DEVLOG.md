@@ -490,6 +490,165 @@ Gemini 503:
 - ¿Cómo se estructura un job de re-indexación automática con Airflow?
 - ¿Cómo se escriben tests unitarios con mocks para este pipeline?
 
+---
+
+### Iteración 002 — Observabilidad con LangFuse
+
+**Fecha:** 2026
+**Rama:** `feature/langfuse-observability`
+**Estado:** 🚧 en progreso
+
+#### Decisión de qué implementar primero y por qué
+
+Se evaluaron tres opciones del backlog técnico de prioridad 🔴 Alta:
+- Tests unitarios con pytest
+- Evaluación con RAGAs
+- Observabilidad con LangFuse
+
+**Se eligió LangFuse primero** por las siguientes razones:
+
+1. **Visibilidad antes que validación.** Sin observabilidad se trabaja a ciegas. No se sabe cuánto tarda cada etapa, qué prompt exacto recibe Gemini, ni cuántos tokens consume cada request. LangFuse resuelve esto inmediatamente sobre el pipeline existente.
+
+2. **Baseline para medir mejoras futuras.** Cuando se implemente re-ranking, hybrid search o el carrito inteligente, LangFuse permitirá comparar latencia y calidad antes vs después con datos reales en lugar de intuición.
+
+3. **Los tests se escriben mejor con contexto.** Para mockear correctamente los servicios se necesita entender el flujo exacto de cada llamada. LangFuse da ese entendimiento visual primero.
+
+4. **Orden lógico de madurez de un sistema ML en producción:** primero observas → luego mides → luego proteges → luego mejoras.
+
+**Orden definitivo del backlog técnico:**
+```
+1. LangFuse        → observar
+2. RAGAs           → medir calidad
+3. pytest + mocks  → proteger
+4. Re-ranking      → mejorar con datos reales
+```
+
+#### Qué es LangFuse y por qué existe
+
+Los LLMs en producción tienen un problema que no existe en software tradicional: **no puedes hacer `print` de lo que está pasando**.
+
+En un endpoint REST clásico puedes loggear cada paso y entender el flujo. En un pipeline RAG con LLMs el problema es más profundo:
+
+- ¿Qué prompt exacto le llegó a Gemini?
+- ¿Cuántos tokens consumió?
+- ¿Cuánto tardó el embedding vs la búsqueda vs la generación?
+- ¿Qué productos recuperó ChromaDB para esa consulta específica?
+- ¿El usuario consideró útil la respuesta?
+
+LangFuse es la herramienta estándar de la industria para responder estas preguntas. Es el equivalente a un APM (Application Performance Monitor) pero diseñado específicamente para pipelines LLM.
+
+**Conceptos clave de LangFuse:**
+
+| Concepto | Qué es | Analogía |
+|---|---|---|
+| **Trace** | Registro completo de un request de principio a fin | Un request en un APM clásico |
+| **Span** | Una etapa dentro del trace (embedding, búsqueda, generación) | Una función trackeada |
+| **Generation** | Span específico para llamadas a LLMs — trackea tokens y costo | Span especializado |
+| **Score** | Evaluación de calidad de un trace (manual o automática) | Métrica de calidad |
+| **Session** | Agrupación de traces de un mismo usuario/conversación | Sesión de usuario |
+
+**Cómo se verá nuestro pipeline en LangFuse:**
+
+```
+Trace: POST /api/v1/search
+├── Span: embed_query          (latencia: ~200ms)
+│   └── input: "audífonos inalámbricos..."
+│   └── output: [0.023, -0.041, ...] 384 dims
+├── Span: vector_search        (latencia: ~50ms)
+│   └── input: embedding + filtros
+│   └── output: 5 productos con scores
+└── Generation: gemini_generate (latencia: ~2000ms, tokens: 450)
+    └── input: prompt completo con productos
+    └── output: respuesta final
+    └── costo: $0.000X
+```
+
+#### Qué se va a construir
+
+- Integración de LangFuse SDK en el pipeline existente
+- Traces automáticos por cada request al endpoint `/search`
+- Spans para cada etapa: embedding, búsqueda, generación
+- Logging de tokens, latencia y costo por llamada a Gemini
+- Dashboard en LangFuse Cloud (capa gratuita)
+- Variables de entorno para habilitar/deshabilitar tracing
+
+#### Qué reutiliza del pipeline actual
+
+Todo. LangFuse se integra como una capa de instrumentación que envuelve los servicios existentes sin modificar su lógica. Es el patrón **Decorator** aplicado a observabilidad.
+
+#### Qué es nuevo
+
+- `app/core/telemetry.py` — cliente LangFuse singleton
+- Decoradores/wrappers de tracing en `SearchService`
+- Variables de entorno: `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`
+
+#### Preguntas abiertas al inicio de la iteración — resolución
+
+| Pregunta | Estado | Resolución |
+|---|---|---|
+| ¿Decorator o context manager? | ✅ Resuelta | Context manager — permite spans anidados dentro de un mismo método. Ver Conceptos aprendidos. |
+| ¿Cómo evitar latencia perceptible del tracing? | ⚠️ Parcial | LangFuse es asíncrono por diseño (estructuralmente despreciable). Falta medición A/B explícita. |
+| ¿Tracing en modo test sin enviar datos reales? | ➡️ Trasladada | Se resolverá en la iteración de tests unitarios (pytest + mocks) |
+| ¿Qué scores automáticos configurar? | ➡️ Trasladada | Se resolverá en la iteración de evaluación con RAGAs |
+
+**Lección de proceso:** no toda pregunta abierta se resuelve en la misma iteración donde se planteó. Algunas son semillas para iteraciones futuras. Se trasladan explícitamente a la iteración donde tienen sentido natural, en lugar de forzar una respuesta prematura o dejarlas huérfanas.
+
+---
+
+#### Errores encontrados y resueltos
+
+| Error | Causa | Solución |
+|---|---|---|
+| Conflictos de dependencias al instalar LangFuse | LangFuse 4.7.1 requiere OpenTelemetry 1.42.1 pero el entorno tenía 1.27.0 instalado como dependencia transitiva de `google-generativeai` (SDK viejo). Al actualizar OTel se rompió compatibilidad con `opentelemetry-instrumentation-fastapi`, `opentelemetry-exporter-otlp-proto-grpc` y `google-ai-generativelanguage` | Desinstalar los paquetes conflictivos del SDK viejo. Reinstalar `opentelemetry-exporter-otlp-proto-grpc>=1.42.1` compatible con LangFuse. Verificar con `pip check` |
+
+Lección aprendida:
+
+En proyectos Python con múltiples SDKs de IA, los conflictos de OpenTelemetry son comunes porque varios SDKs lo usan como dependencia transitiva con versiones distintas. pip check es el comando correcto para detectarlos. No basta con que la instalación termine sin errores rojos.
+
+#### Conceptos aprendidos
+
+**LangFuse 4.x y OpenTelemetry**
+LangFuse 4.x migró de una API propia (`trace()`, `span()`) a un modelo basado en OpenTelemetry. Los spans se crean con `start_as_current_observation()` como context managers anidados. El span hijo se asocia automáticamente al padre por el contexto de OTel (no hay que pasar IDs manualmente).
+
+**Graceful degradation en observabilidad**
+La observabilidad no debe ser un punto de falla del sistema principal. Si LangFuse no está disponible, el `observation()` context manager actúa como no-op — el pipeline funciona exactamente igual. Esto se implementó con un `else: yield` en el context manager.
+
+**Análisis de latencia basado en datos reales**
+El primer trace reveló que el 93% de la latencia del pipeline viene de Gemini (4.32s de 4.64s totales). embed_query tarda ~0.25s y vector_search ~0.01s. Conclusión: si se quiere optimizar latencia, el único lugar donde vale trabajar es en la capa LLM — streaming o caché de respuestas.
+
+**Conflictos de dependencias con OpenTelemetry**
+Múltiples SDKs de IA usan OpenTelemetry como dependencia transitiva con versiones incompatibles entre sí. Al instalar LangFuse 4.x se actualizó OTel de 1.27.0 a 1.42.1, rompiendo `opentelemetry-instrumentation-fastapi` y `opentelemetry-exporter-otlp-proto-grpc`. Solución: desinstalar los paquetes del SDK viejo y reinstalar las versiones compatibles. `pip check` es el comando correcto para detectar estos conflictos.
+
+**Por qué context manager y no decorator**
+Se evaluaron ambas opciones para integrar LangFuse. Un decorator es ideal cuando quieres instrumentar una función completa como una unidad ("toda esta función es un span"). Pero para este caso de uso, el pipeline necesita spans anidados *dentro* del mismo método `search()`: embed_query, vector_search y gemini_generate son tres spans hijos de un mismo trace raíz, todos dentro de una sola función. Un decorator solo podría envolver `search()` completo como un único span; perderíamos el desglose por etapa, que es justo lo que permitió descubrir que el 93% de la latencia viene de Gemini. El context manager permite anidar spans con el nivel de granularidad que necesitamos.
+
+**Overhead de latencia del tracing**
+LangFuse envía los eventos a su backend de forma asíncrona. El SDK no bloquea el pipeline esperando confirmación de que el trace fue recibido. Los eventos se acumulan en memoria y se envían en batches, con `flush()` garantizando el envío final en el shutdown. No se hizo una medición A/B explícita (mismo request con y sin LangFuse), pero el diseño asíncrono es la garantía estructural de que el overhead es despreciable frente a los ~4.5s que toma Gemini. Validar esto con métricas reales queda como mejora futura.
+
+#### Resultados
+
+```
+Trace: rag_search (trace raíz)
+├── embed_query     ~0.25s  ← sentence-transformers local
+├── vector_search   ~0.01s  ← ChromaDB prácticamente instantáneo  
+└── gemini_generate ~4.50s  ← 93% de la latencia total
+
+Input visible:  query, n_results, price_max, category
+Output visible: ai_response completa de Gemini
+```
+
+Dashboard LangFuse mostrando:
+- Árbol de spans anidados con latencias reales
+- Input y output de cada etapa del pipeline
+- Historial de todos los requests
+
+#### Decisiones tomadas durante la implementación
+
+**`update_current_span()` en lugar de `set_current_trace_io()`**
+`set_current_trace_io()` no actualizaba el output del span raíz correctamente en LangFuse 4.x. Se reemplazó por `update_current_span()` que sí funciona dentro del context manager activo.
+
+**`auth_check()` removido del TelemetryClient**
+Se removió la llamada a `auth_check()` en el constructor porque agrega latencia al startup y LangFuse ya maneja errores de autenticación internamente con logs claros.
 
 ---
 
@@ -804,6 +963,10 @@ Capacidad reutilizable por múltiples features para extraer texto estructurado d
 
 Mejoras de ingeniería al pipeline existente, separadas del roadmap de features de producto.
 
+> 📌 **Preguntas heredadas de iteraciones previas:**
+> - *Tests (pytest)*: ¿cómo manejar el tracing de LangFuse en modo test para no enviar datos reales? (origen: Iteración 002)
+> - *Evaluación (RAGAs)*: ¿qué scores automáticos de LangFuse configurar desde el inicio? (origen: Iteración 002)
+
 | Prioridad | Mejora | Concepto que enseña |
 |---|---|---|
 | 🔴 Alta | Tests unitarios con pytest y mocks | Testing con DI, mocking de APIs externas |
@@ -817,4 +980,4 @@ Mejoras de ingeniería al pipeline existente, separadas del roadmap de features 
 | 🟢 Baja | Job de re-indexación automática | Pipelines de datos en producción |
 | 🟢 Baja | Fine-tuning del modelo de embeddings | ML avanzado específico de dominio |
 
-*Última actualización: Iteración 001 — Roadmap de features agregado*
+*Última actualización: Iteración 002 completa — LangFuse observabilidad + resolución de preguntas abiertas*
