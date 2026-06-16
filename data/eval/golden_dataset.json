@@ -1,0 +1,72 @@
+[
+    {
+      "id": "eval_001",
+      "query": "audífonos inalámbricos con cancelación de ruido",
+      "category": "facil",
+      "relevant_product_ids": ["prod_001", "prod_002", "prod_003", "prod_004", "prod_005"],
+      "notes": "Match directo - los 5 audífonos del catálogo tienen ANC explícito en su descripción"
+    },
+    {
+      "id": "eval_002",
+      "query": "mouse para gaming",
+      "category": "facil",
+      "relevant_product_ids": ["prod_007"],
+      "notes": "Solo el Razer DeathAdder V3 está descrito explícitamente para gaming/FPS"
+    },
+    {
+      "id": "eval_003",
+      "query": "teclado mecánico inalámbrico",
+      "category": "facil",
+      "relevant_product_ids": ["prod_008"],
+      "notes": "Solo el Keychron K2 Pro es mecánico e inalámbrico simultáneamente"
+    },
+    {
+      "id": "eval_004",
+      "query": "monitor para diseño gráfico con buen color",
+      "category": "facil",
+      "relevant_product_ids": ["prod_010"],
+      "notes": "Dell UltraSharp menciona explícitamente 100% sRGB y diseñadores"
+    },
+    {
+      "id": "eval_005",
+      "query": "audífonos inalámbricos baratos menos de 100 dólares",
+      "category": "filtro_negocio",
+      "relevant_product_ids": ["prod_003"],
+      "notes": "Con price_max=100: solo Anker Soundcore Q45 ($59.99) califica entre los audífonos"
+    },
+    {
+      "id": "eval_006",
+      "query": "productos de la marca Logitech",
+      "category": "filtro_negocio",
+      "relevant_product_ids": ["prod_006", "prod_009"],
+      "notes": "Filtro por brand=Logitech: MX Master 3S y MX Keys Mini"
+    },
+    {
+      "id": "eval_007",
+      "query": "wireless gaming mouse with high precision",
+      "category": "crosslingue",
+      "relevant_product_ids": ["prod_007"],
+      "notes": "Consulta en inglés debe encontrar el Razer DeathAdder V3 (descrito en español)"
+    },
+    {
+      "id": "eval_008",
+      "query": "algo para trabajar cómodo todo el día en la oficina",
+      "category": "ambigua",
+      "relevant_product_ids": ["prod_006", "prod_009", "prod_002", "prod_010"],
+      "notes": "Ambigua y multi-categoría: mouse ergonómico, teclado productividad, audífonos para calls, monitor. Evalúa si el sistema interpreta intención amplia"
+    },
+    {
+      "id": "eval_009",
+      "query": "power bank y cargadores para laptop",
+      "category": "facil",
+      "relevant_product_ids": ["prod_012"],
+      "notes": "Solo el Anker 737 Power Bank está en categoría cargadores"
+    },
+    {
+      "id": "eval_010",
+      "query": "smartphone Samsung Galaxy S24",
+      "category": "caso_negativo",
+      "relevant_product_ids": [],
+      "notes": "CASO NEGATIVO: no hay smartphones en el catálogo (solo Galaxy Buds2 Pro, que son audífonos). El sistema NO debe inventar relevancia ni recomendar productos no relacionados"
+    }
+  ]
