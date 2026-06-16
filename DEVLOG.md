@@ -742,13 +742,77 @@ Las dos preguntas trasladadas de la Iteración 002 se resuelven aquí:
 
 - **"¿Qué scores automáticos configurar?"** → Los scores de RAGAs (faithfulness, answer_relevance, context_precision) se enviarán a LangFuse con `create_score()`, asociados al trace de cada request. Esto permite ver en el dashboard no solo latencia sino también calidad — por trace individual y como tendencia agregada.
 
+#### Decisión de diseño — RAGAs framework vs implementación propia
+
+**Contexto:**
+Al instalar `ragas==0.4.3` se detectaron dos problemas que llevaron a replantear el enfoque:
+
+1. **Bug interno de ragas 0.4.3:** su código importa `langchain_community.chat_models.vertexai`, un módulo que no existe en la versión de `langchain_community` que la propia librería instala. No es un conflicto de versiones resoluble con pines — es código roto.
+
+2. **Costo de dependencias desproporcionado:** ragas trajo 38 paquetes nuevos (todo el ecosistema LangChain 1.0 + openai SDK + langgraph + instructor...), generando conflictos con `websockets` y `pydantic` que afectaban el stack principal.
+
+**Decisión:** implementar las métricas de evaluación directamente usando `GeminiService` como LLM-as-judge, sin dependencias externas.
+
+**Trade-offs analizados:**
+
+| | RAGAs framework | Implementación propia |
+|---|---|---|
+| Dependencias | 38 paquetes nuevos | 0 — reutiliza GeminiService |
+| Conflictos | websockets, pydantic | Ninguno |
+| Transparencia | Caja negra | Control total del prompt |
+| Mantenibilidad | Depende de versiones externas | Depende solo de Gemini |
+
+**Criterio general que emerge de esta decisión:**
+> Antes de instalar un framework de evaluación, pregunta: ¿el costo en dependencias y complejidad es proporcional al problema que resuelve? Para un catálogo de 12 productos con un LLM ya integrado, implementar las métricas directamente es más limpio, más educativo y más mantenible.
+
+**Lección de dependency management:**
+RAGAs es un caso real de "dependency hell" en el ecosistema LangChain — múltiples SDKs de IA compiten por versiones de pydantic, websockets y opentelemetry. La solución no siempre es "resolver los conflictos" — a veces es "no instalar la dependencia problemática y resolver el problema de otra forma". `pip check` detectó el conflicto. La decisión fue estratégica, no técnica.
+
 #### Qué se va a construir
 
-- Dataset de evaluación: 10-15 consultas con productos relevantes anotados manualmente (ground truth)
-- Script `scripts/evaluate_rag.py` que corre RAGAs sobre el dataset
-- Métricas: Faithfulness, Answer Relevance, Context Precision, Context Recall
-- Envío de scores a LangFuse asociados a cada trace de evaluación
-- Reporte de resultados en markdown
+Pipeline de evaluación propio con Gemini como juez:
+
+**Métricas implementadas:**
+
+```
+Faithfulness
+└── ¿Cada afirmación de la respuesta está soportada
+    por los productos recuperados? (anti-alucinación)
+    Score: afirmaciones_soportadas / total_afirmaciones
+
+Answer Relevance
+└── ¿La respuesta contesta directamente la consulta?
+    Score: 0.0 a 1.0 según qué tan directa es la respuesta
+
+Context Precision
+└── De los productos recuperados por ChromaDB,
+    ¿cuántos eran realmente relevantes?
+    Score: productos_relevantes_recuperados / total_recuperados
+
+Context Recall
+└── De TODOS los productos relevantes del catálogo,
+    ¿cuántos se recuperaron?
+    Score: productos_relevantes_recuperados / total_relevantes_existentes
+    (requiere golden dataset anotado)
+```
+
+**Componentes a crear:**
+- `data/eval/golden_dataset.json` — 10 consultas anotadas con
+  productos relevantes esperados (ground truth)
+- `app/services/evaluation_service.py` — métricas via Gemini-as-judge
+- `scripts/evaluate_rag.py` — pipeline de evaluación completo
+- Envío de scores a LangFuse con `create_score()`
+
+**Qué reutiliza del pipeline actual:**
+- `GeminiService` — como LLM-as-judge para las métricas
+- `SearchService` — ejecuta búsquedas reales para evaluar
+- `TelemetryClient` — envía scores a LangFuse
+
+**Qué es nuevo:**
+- Prompts de evaluación diseñados para cada métrica
+- Golden dataset anotado manualmente
+- `EvaluationService` con las 4 métricas
+- Script de evaluación batch
 
 #### Qué reutiliza del pipeline actual
 
@@ -763,10 +827,10 @@ Las dos preguntas trasladadas de la Iteración 002 se resuelven aquí:
 
 #### Preguntas abiertas al inicio de la iteración
 
-- ¿RAGAs necesita un LLM propio para evaluar, o reutiliza Gemini?
-- ¿Cómo se construye un "golden dataset" de forma metodológicamente correcta?
-- ¿Qué umbral de cada métrica se considera "aceptable" para este caso de uso?
-- ¿Cómo se interpretan resultados cuando el catálogo es pequeño (12 productos)?
+- ¿RAGAs necesita un LLM propio para evaluar? → **Respondida:** sí, usa un LLM-as-judge internamente. Nosotros usaremos Gemini directamente, que es equivalente.
+- ¿Cómo se construye un golden dataset metodológicamente correcto? → **Pendiente:** se responde al construirlo
+- ¿Qué umbral de cada métrica es "aceptable"? → **Pendiente:** se responde al ver los primeros resultados
+- ¿Cómo interpretar resultados con catálogo pequeño (12 productos)? → **Pendiente:** se responde al analizar resultados
 
 ---
 
