@@ -5,6 +5,7 @@ from google import genai
 from google.genai import types
 
 from app.core.config import settings
+from app.core.gemini_retry import call_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -32,16 +33,16 @@ class GeminiService:
     # el system prompt se cachea en el lado de Google,
     # reduciendo latencia y costos en requests repetidos.
     _SYSTEM_PROMPT = """Eres un asistente experto en recomendación de productos 
-electrónicos. Tu rol es analizar productos recuperados de un catálogo y 
-presentarlos de forma clara, honesta y útil al usuario.
+    electrónicos. Tu rol es analizar productos recuperados de un catálogo y 
+    presentarlos de forma clara, honesta y útil al usuario.
 
-Reglas que debes seguir siempre:
-- Recomienda SOLO productos del catálogo proporcionado, nunca inventes productos
-- Sé específico sobre por qué cada producto es relevante para la consulta
-- Menciona precio, características clave y para quién es ideal cada producto
-- Si ningún producto es realmente relevante para la consulta, dilo honestamente
-- Responde siempre en el mismo idioma de la consulta del usuario
-- Sé conciso: máximo 3-4 líneas por producto recomendado"""
+    Reglas que debes seguir siempre:
+    - Recomienda SOLO productos del catálogo proporcionado, nunca inventes productos
+    - Sé específico sobre por qué cada producto es relevante para la consulta
+    - Menciona precio, características clave y para quién es ideal cada producto
+    - Si ningún producto es realmente relevante para la consulta, dilo honestamente
+    - Responde siempre en el mismo idioma de la consulta del usuario
+    - Sé conciso: máximo 3-4 líneas por producto recomendado"""
 
     def __init__(self) -> None:
         logger.info("Inicializando cliente Gemini con modelo: %s", settings.gemini_model)
@@ -118,17 +119,19 @@ Reglas que debes seguir siempre:
 
         logger.info("Enviando request a Gemini | query: '%s'", user_query[:50])
 
-        response = self._client.models.generate_content(
-            model=self._model,
-            contents=user_prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=self._SYSTEM_PROMPT,
-                temperature=0.3,
-                max_output_tokens=1024,
-            ),
+        generated_text = call_with_retry(
+            fn=lambda: self._client.models.generate_content(
+                model=self._model,
+                contents=user_prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=self._SYSTEM_PROMPT,
+                    temperature=0.3,
+                    max_output_tokens=1024,
+                ),
+            ).text,
+            context="generate_response",
         )
 
-        generated_text = response.text
         logger.info("Respuesta generada: %d caracteres", len(generated_text))
 
         return generated_text

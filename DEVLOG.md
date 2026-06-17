@@ -66,9 +66,7 @@ Bitácora técnica del proyecto. Documenta decisiones de arquitectura, conceptos
 | Para CV / entrevistas | Más cercano a producción real | Más académico/research |
 | Curva de aprendizaje | Baja | Media |
 
-ChromaDB replica mejor el patrón que usan sistemas como el de
-Mercado Libre, donde cada producto tiene metadata (precio, categoría)
-y puedes filtrar por ella además de buscar por similitud.
+ChromaDB replica mejor el patrón que usan sistemas como el de Mercado Libre, donde cada producto tiene metadata (precio, categoría) y puedes filtrar por ella además de buscar por similitud.
 
 ### `google-genai` vs `google-generativeai`
 
@@ -82,8 +80,7 @@ import google.generativeai as genai
 from google import genai
 ```
 
-El SDK nuevo soporta Gemini 2.0, 2.5, 3.x y todos los modelos futuros. El viejo quedó congelado en Gemini 1.x. Para un proyecto que quiere mostrar stack actualizado, `google-genai` es la elección
-correcta. Cambiar de modelo es solo una variable de entorno, demostrando una arquitectura bien desacoplada.
+El SDK nuevo soporta Gemini 2.0, 2.5, 3.x y todos los modelos futuros. El viejo quedó congelado en Gemini 1.x. Para un proyecto que quiere mostrar stack actualizado, `google-genai` es la elección correcta. Cambiar de modelo es solo una variable de entorno, demostrando una arquitectura bien desacoplada.
 
 ### Patrones de diseño aplicados
 
@@ -93,6 +90,44 @@ correcta. Cambiar de modelo es solo una variable de entorno, demostrando una arq
 | Factory + lru_cache | `get_embedding_service()`, `get_gemini_service()`, `get_vector_store()` | Singleton moderno y testeable. El modelo de 90MB se carga una vez. |
 | Dependency Injection | `SearchService.__init__()`, `Depends()` en endpoints | Testabilidad sin cargar modelos reales ni llamar APIs externas. |
 | Layered Architecture | `endpoints → services → repositories` | Cada capa conoce solo la inmediatamente inferior. Cambios aislados por capa. |
+
+### Convenciones de Git workflow
+
+Reglas operativas adoptadas durante el desarrollo del proyecto. No son decisiones de arquitectura del software, pero sí decisiones de ingeniería que afectan la mantenibilidad del repositorio.
+
+**Estrategia de ramas:**
+
+```
+main      → código estable, "producción"
+develop   → integración de iteraciones completas
+feature/* → una rama por iteración del DEVLOG
+```
+
+**Commits directos a `develop` vs Pull Request:**
+
+| Tipo de cambio | Flujo |
+|---|---|
+| Código (features, fixes, refactors) | `feature/*` → PR → `develop` |
+| Documentación menor (DEVLOG, README, typos) | Commit directo a `develop` |
+
+La diferencia: el código necesita revisión porque afecta comportamiento del sistema. La documentación no — bloquear un typo detrás de un PR agrega fricción sin agregar valor.
+
+**Limpieza de ramas después de merge:**
+
+```bash
+git checkout develop
+git pull origin develop
+git branch -d feature/nombre-de-la-rama          # borra local
+git push origin --delete feature/nombre-de-la-rama  # borra remoto
+```
+
+`git branch -d` solo borra el puntero local — los commits permanecen en `develop` a través del merge commit, nada se pierde. `git push origin --delete` borra el mismo puntero en GitHub.
+
+**Por qué se borran las ramas feature después de mergear:**
+- Una rama feature representa trabajo en progreso de UNA tarea. Una vez mergeada, su propósito se cumplió.
+- Mantener ramas viejas genera ambigüedad: ¿está activa o ya se mergeó? ¿debo seguir trabajando ahí?
+- Es la convención por defecto en GitHub/GitLab/Bitbucket — ambos sugieren "Delete branch" automáticamente tras el merge.
+- Excepción: ramas de release o de entornos (`staging`,`production`) sí se mantienen como permanentes por diseño.
 
 ---
 
@@ -652,6 +687,207 @@ Se removió la llamada a `auth_check()` en el constructor porque agrega latencia
 
 ---
 
+### Iteración 003 — Evaluación de calidad con RAGAs
+
+**Fecha:** 2026
+**Rama:** `feature/ragas-evaluation`
+**Estado:** 🚧 en progreso — código completo, validación end-to-end bloqueada por cuota gratuita diaria de Gemini agotada en todos los modelos probados. Pendiente: re-ejecutar smoke test y dataset completo cuando la cuota se reinicie, y avanzar evaluación online en paralelo.
+
+#### Por qué esta iteración y por qué ahora
+
+Con LangFuse ya tenemos visibilidad de **latencia y costos**, pero no de **calidad**. Sabemos cuánto tarda cada etapa, pero no sabemos:
+
+- ¿Los productos que recupera ChromaDB son realmente los más relevantes?
+- ¿Gemini está inventando información o se basa solo en los productos recuperados?
+- ¿La respuesta generada realmente responde la consulta del usuario?
+
+RAGAs (Retrieval-Augmented Generation Assessment) es el framework estándar de la industria para responder estas preguntas de forma automática y reproducible.
+
+#### Qué es RAGAs y por qué existe
+
+RAGAs evalúa un pipeline RAG en las dos fases que lo componen, cada una con sus propias métricas:
+
+```
+FASE RETRIEVAL                    FASE GENERATION
+───────────────                   ────────────────
+Context Precision                 Faithfulness
+└─ ¿los productos recuperados     └─ ¿la respuesta se basa SOLO
+   son relevantes para la             en los productos recuperados,
+   consulta?                          o Gemini inventó algo?
+
+Context Recall                    Answer Relevance
+└─ ¿se recuperó TODA la            └─ ¿la respuesta realmente
+   información relevante               contesta la pregunta del
+   disponible?                          usuario?
+```
+
+**Diferencia clave con las métricas de IR clásicas (Precision@K, NDCG):**
+
+```
+Precision@K / NDCG          RAGAs
+───────────────────         ─────────────────────
+Requieren un dataset         Usan un LLM como "juez"
+anotado manualmente con      para evaluar relevancia
+relevancia ground-truth       sin necesitar anotación manual
+(qué productos SON            previa — más rápido de
+relevantes para cada query)   implementar, pero el juez
+                               puede tener sesgos propios
+```
+
+Para este proyecto, con un catálogo de solo 12 productos, anotar manualmente un dataset de evaluación es viable Y valioso. Por eso se complementará RAGAs con un dataset pequeño anotado a mano. Esto da lo mejor de ambos enfoques.
+
+#### Cómo encaja con LangFuse
+
+Las dos preguntas trasladadas de la Iteración 002 se resuelven aquí:
+
+- **"¿Qué scores automáticos configurar?"** → Los scores de RAGAs (faithfulness, answer_relevance, context_precision) se enviarán a LangFuse con `create_score()`, asociados al trace de cada request. Esto permite ver en el dashboard no solo latencia sino también calidad — por trace individual y como tendencia agregada.
+
+#### Decisión de diseño — RAGAs framework vs implementación propia
+
+**Contexto:**
+Al instalar `ragas==0.4.3` se detectaron dos problemas que llevaron a replantear el enfoque:
+
+1. **Bug interno de ragas 0.4.3:** su código importa `langchain_community.chat_models.vertexai`, un módulo que no existe en la versión de `langchain_community` que la propia librería instala. No es un conflicto de versiones resoluble con pines — es código roto.
+
+2. **Costo de dependencias desproporcionado:** ragas trajo 38 paquetes nuevos (todo el ecosistema LangChain 1.0 + openai SDK + langgraph + instructor...), generando conflictos con `websockets` y `pydantic` que afectaban el stack principal.
+
+**Decisión:** implementar las métricas de evaluación directamente usando `GeminiService` como LLM-as-judge, sin dependencias externas.
+
+**Trade-offs analizados:**
+
+| | RAGAs framework | Implementación propia |
+|---|---|---|
+| Dependencias | 38 paquetes nuevos | 0 — reutiliza GeminiService |
+| Conflictos | websockets, pydantic | Ninguno |
+| Transparencia | Caja negra | Control total del prompt |
+| Mantenibilidad | Depende de versiones externas | Depende solo de Gemini |
+
+**Criterio general que emerge de esta decisión:**
+> Antes de instalar un framework de evaluación, pregunta: ¿el costo en dependencias y complejidad es proporcional al problema que resuelve? Para un catálogo de 12 productos con un LLM ya integrado, implementar las métricas directamente es más limpio, más educativo y más mantenible.
+
+**Lección de dependency management:**
+RAGAs es un caso real de "dependency hell" en el ecosistema LangChain — múltiples SDKs de IA compiten por versiones de pydantic, websockets y opentelemetry. La solución no siempre es "resolver los conflictos" — a veces es "no instalar la dependencia problemática y resolver el problema de otra forma". `pip check` detectó el conflicto. La decisión fue estratégica, no técnica.
+
+#### Qué se va a construir
+
+Pipeline de evaluación propio con Gemini como juez:
+
+**Métricas implementadas:**
+
+```
+Faithfulness
+└── ¿Cada afirmación de la respuesta está soportada
+    por los productos recuperados? (anti-alucinación)
+    Score: afirmaciones_soportadas / total_afirmaciones
+
+Answer Relevance
+└── ¿La respuesta contesta directamente la consulta?
+    Score: 0.0 a 1.0 según qué tan directa es la respuesta
+
+Context Precision
+└── De los productos recuperados por ChromaDB,
+    ¿cuántos eran realmente relevantes?
+    Score: productos_relevantes_recuperados / total_recuperados
+
+Context Recall
+└── De TODOS los productos relevantes del catálogo,
+    ¿cuántos se recuperaron?
+    Score: productos_relevantes_recuperados / total_relevantes_existentes
+    (requiere golden dataset anotado)
+```
+
+**Componentes a crear:**
+- `data/eval/golden_dataset.json` — 10 consultas anotadas con
+  productos relevantes esperados (ground truth)
+- `app/services/evaluation_service.py` — métricas via Gemini-as-judge
+- `scripts/evaluate_rag.py` — pipeline de evaluación completo
+- Envío de scores a LangFuse con `create_score()`
+
+**Qué reutiliza del pipeline actual:**
+- `GeminiService` — como LLM-as-judge para las métricas
+- `SearchService` — ejecuta búsquedas reales para evaluar
+- `TelemetryClient` — envía scores a LangFuse
+
+**Qué es nuevo:**
+- Prompts de evaluación diseñados para cada métrica
+- Golden dataset anotado manualmente
+- `EvaluationService` con las 4 métricas
+- Script de evaluación batch
+
+#### Qué reutiliza del pipeline actual
+
+- `SearchService.search()` — se ejecuta tal cual para generar los resultados a evaluar
+- `TelemetryClient` — para enviar los scores a LangFuse
+
+#### Qué es nuevo
+
+- `data/eval/golden_dataset.json` — dataset anotado de evaluación
+- `scripts/evaluate_rag.py` — pipeline de evaluación
+- Dependencia nueva: `ragas`
+
+#### Preguntas abiertas al inicio de la iteración
+
+- ¿RAGAs necesita un LLM propio para evaluar? → **Respondida:** sí, usa un LLM-as-judge internamente. Nosotros usaremos Gemini directamente, que es equivalente.
+- ¿Cómo se construye un golden dataset metodológicamente correcto? → **Pendiente:** se responde al construirlo
+- ¿Qué umbral de cada métrica es "aceptable"? → **Pendiente:** se responde al ver los primeros resultados
+- ¿Cómo interpretar resultados con catálogo pequeño (12 productos)? → **Pendiente:** se responde al analizar resultados
+
+---
+
+#### Errores encontrados y resueltos
+
+| Error | Causa | Solución |
+|---|---|---|
+| `AttributeError: 'EvaluationService' object has no attribute '_call_gemini_with_retry'` | Al extraer el retry a un helper compartido (`app/core/gemini_retry.py`), se eliminó el método de la clase pero `evaluate_answer_relevance` no se actualizó para usar el nuevo helper | Reemplazar la llamada directa por `call_with_retry(fn=lambda: ...)` en el método faltante |
+| `GeminiService.generate_response` sin retry mientras `EvaluationService` sí lo tenía | El retry se implementó primero solo donde se necesitaba para el script de evaluación, sin considerar que `SearchService` (usado por el mismo script) también llama a Gemini sin protección | Extraer el retry a `app/core/gemini_retry.py` como utilidad compartida entre ambos servicios — principio DRY aplicado entre servicios distintos |
+| RAGAs 0.4.3 con import roto e instalación de 38 dependencias conflictivas | Ver sección "Decisión de diseño — RAGAs framework vs implementación propia" más arriba en esta misma iteración | Desinstalar RAGAs y todo su árbol de dependencias; implementar las métricas directamente con Gemini como juez |
+
+---
+
+#### Gestión de cuotas gratuitas en evaluación batch con LLMs
+
+Diseñar un pipeline de evaluación que usa un LLM como juez introduce un costo en llamadas que no existe en evaluación con métricas puramente determinísticas. Vale la pena dejar registrado el cálculo y la decisión de diseño que resultó de él.
+
+**El cálculo de costo:**
+
+```
+Por cada caso del golden dataset: 3 llamadas a Gemini
+(generar respuesta + Faithfulness + Answer Relevance)
+
+Dataset completo (10 casos):  30 llamadas/corrida
+Dataset smoke (5 casos):      15 llamadas/corrida
+```
+
+Las capas gratuitas de LLMs imponen límites diarios además de los límites por minuto — y estos varían por modelo de forma específica del proyecto, no de forma universal. Un mensaje de cuota con `limit: 0` indica que el modelo nunca tuvo cuota gratuita asignada en ese proyecto, mientras que `limit: 20` (agotado) indica que sí la tenía pero se consumió.
+
+**Decisión de diseño resultante:**
+Se creó `golden_dataset_smoke.json` — un subconjunto de 5 casos representativos del dataset completo de 10. El script `evaluate_rag.py` acepta el flag `--smoke` para correr esta versión reducida durante desarrollo e iteración rápida, reservando el dataset completo para validaciones finales antes de un release.
+Este patrón (smoke test pequeño vs suite completa) es estándar en testing de software y se traslada naturalmente a evaluación de pipelines RAG: no toda corrida de validación necesita ejecutar el 100% de los casos.
+
+**Mejora identificada para el helper de retry (backlog):**
+`call_with_retry` actualmente trata todo error 429 igual, con backoff exponencial de segundos. Eso es correcto para límites *por minuto*, pero inútil para límites *por día* — ningún backoff de segundos libera cuota diaria agotada. El propio mensaje de error de Google incluye el `quotaId` (`PerMinute` vs `PerDay`), lo cual permitiría que el helper distinga ambos casos y falle rápido con un mensaje claro en el segundo caso, en lugar de agotar reintentos inútilmente.
+---
+
+#### Conceptos aprendidos
+
+**LLM-as-judge**
+Usar un LLM para evaluar las respuestas de otro LLM (o de sí mismo) funciona porque la tarea de evaluación es mucho más acotada que la de generación: en lugar de "genera una respuesta completa y creativa", es "verifica si esta afirmación específica está en este texto" — una tarea cerrada y verificable.
+
+**Por qué Faithfulness y Answer Relevance son independientes**
+Una respuesta puede ser 100% fiel al contexto recuperado (no inventa nada) y aun así no responder lo que el usuario preguntó. Por eso RAGAs (y nuestra implementación) las mide por separado en lugar de un único score combinado — un solo número ocultaría cuál de los dos problemas tiene el sistema.
+
+**Context Precision/Recall son determinísticos, Faithfulness/
+Answer Relevance no**
+Las dos primeras son cálculos de conjuntos sobre IDs (no necesitan LLM). Las otras dos requieren juicio semántico y sí dependen de Gemini. Esto importa para el costo: las métricas basadas en LLM son las que consumen cuota, las basadas en IDs son gratuitas y pueden correr ilimitadamente.
+
+**Cuotas gratuitas de LLMs en producción real**
+Cualquier pipeline de evaluación batch que use un LLM como juez tiene un costo en llamadas que debe calcularse ANTES de diseñar el dataset, no después. La capa gratuita de un proveedor no es un recurso ilimitado para iterar rápido en desarrollo — incluso para 10 casos de prueba.
+
+**DRY entre servicios, no solo dentro de una clase**
+La duplicación de código no solo ocurre dentro de un mismo archivo — ocurre entre servicios distintos que comparten una dependencia externa (en este caso, el SDK de Gemini y su manejo de errores 429). Extraer esa lógica a `app/core/` en lugar de a un servicio específico fue la decisión correcta de capa arquitectónica.
+
+---
+
 ## Roadmap de features
 
 Nuevas capacidades de producto organizadas por complejidad técnica y valor de aprendizaje. Cada feature documenta qué reutiliza del pipeline actual, qué es nuevo, y en qué etapas se requiere ingeniería clásica, ML tradicional o AI con LLM.
@@ -980,4 +1216,4 @@ Mejoras de ingeniería al pipeline existente, separadas del roadmap de features 
 | 🟢 Baja | Job de re-indexación automática | Pipelines de datos en producción |
 | 🟢 Baja | Fine-tuning del modelo de embeddings | ML avanzado específico de dominio |
 
-*Última actualización: Iteración 002 completa — LangFuse observabilidad + resolución de preguntas abiertas*
+*Última actualización: Iteración 003 — evaluación offline implementada con dataset completo y smoke test; validación end-to-end pendiente*

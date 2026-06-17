@@ -1,0 +1,37 @@
+[
+    {
+      "id": "eval_001",
+      "query": "audífonos inalámbricos con cancelación de ruido",
+      "category": "facil",
+      "relevant_product_ids": ["prod_001", "prod_002", "prod_003", "prod_004", "prod_005"],
+      "notes": "Match directo - los 5 audífonos del catálogo tienen ANC explícito en su descripción"
+    },
+    {
+      "id": "eval_002",
+      "query": "mouse para gaming",
+      "category": "facil",
+      "relevant_product_ids": ["prod_007"],
+      "notes": "Solo el Razer DeathAdder V3 está descrito explícitamente para gaming/FPS"
+    },
+    {
+      "id": "eval_003",
+      "query": "teclado mecánico inalámbrico",
+      "category": "facil",
+      "relevant_product_ids": ["prod_008"],
+      "notes": "Solo el Keychron K2 Pro es mecánico Y inalámbrico simultáneamente"
+    },
+    {
+      "id": "eval_005",
+      "query": "audífonos inalámbricos baratos menos de 100 dólares",
+      "category": "filtro_negocio",
+      "relevant_product_ids": ["prod_003"],
+      "notes": "Con price_max=100: solo Anker Soundcore Q45 ($59.99) califica entre los audífonos"
+    },
+    {
+      "id": "eval_010",
+      "query": "smartphone Samsung Galaxy S24",
+      "category": "caso_negativo",
+      "relevant_product_ids": [],
+      "notes": "CASO NEGATIVO: no hay smartphones en el catálogo (solo Galaxy Buds2 Pro, que son audífonos). El sistema NO debe inventar relevancia ni recomendar productos no relacionados"
+    }
+  ]
