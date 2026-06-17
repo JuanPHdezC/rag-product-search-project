@@ -691,7 +691,7 @@ Se removió la llamada a `auth_check()` en el constructor porque agrega latencia
 
 **Fecha:** 2026
 **Rama:** `feature/ragas-evaluation`
-**Estado:** 🚧 en progreso
+**Estado:** 🚧 en progreso — código completo, validación end-to-end bloqueada por cuota gratuita diaria de Gemini agotada en todos los modelos probados. Pendiente: re-ejecutar smoke test y dataset completo cuando la cuota se reinicie, y avanzar evaluación online en paralelo.
 
 #### Por qué esta iteración y por qué ahora
 
@@ -831,6 +831,60 @@ Context Recall
 - ¿Cómo se construye un golden dataset metodológicamente correcto? → **Pendiente:** se responde al construirlo
 - ¿Qué umbral de cada métrica es "aceptable"? → **Pendiente:** se responde al ver los primeros resultados
 - ¿Cómo interpretar resultados con catálogo pequeño (12 productos)? → **Pendiente:** se responde al analizar resultados
+
+---
+
+#### Errores encontrados y resueltos
+
+| Error | Causa | Solución |
+|---|---|---|
+| `AttributeError: 'EvaluationService' object has no attribute '_call_gemini_with_retry'` | Al extraer el retry a un helper compartido (`app/core/gemini_retry.py`), se eliminó el método de la clase pero `evaluate_answer_relevance` no se actualizó para usar el nuevo helper | Reemplazar la llamada directa por `call_with_retry(fn=lambda: ...)` en el método faltante |
+| `GeminiService.generate_response` sin retry mientras `EvaluationService` sí lo tenía | El retry se implementó primero solo donde se necesitaba para el script de evaluación, sin considerar que `SearchService` (usado por el mismo script) también llama a Gemini sin protección | Extraer el retry a `app/core/gemini_retry.py` como utilidad compartida entre ambos servicios — principio DRY aplicado entre servicios distintos |
+| RAGAs 0.4.3 con import roto e instalación de 38 dependencias conflictivas | Ver sección "Decisión de diseño — RAGAs framework vs implementación propia" más arriba en esta misma iteración | Desinstalar RAGAs y todo su árbol de dependencias; implementar las métricas directamente con Gemini como juez |
+
+---
+
+#### Gestión de cuotas gratuitas en evaluación batch con LLMs
+
+Diseñar un pipeline de evaluación que usa un LLM como juez introduce un costo en llamadas que no existe en evaluación con métricas puramente determinísticas. Vale la pena dejar registrado el cálculo y la decisión de diseño que resultó de él.
+
+**El cálculo de costo:**
+
+```
+Por cada caso del golden dataset: 3 llamadas a Gemini
+(generar respuesta + Faithfulness + Answer Relevance)
+
+Dataset completo (10 casos):  30 llamadas/corrida
+Dataset smoke (5 casos):      15 llamadas/corrida
+```
+
+Las capas gratuitas de LLMs imponen límites diarios además de los límites por minuto — y estos varían por modelo de forma específica del proyecto, no de forma universal. Un mensaje de cuota con `limit: 0` indica que el modelo nunca tuvo cuota gratuita asignada en ese proyecto, mientras que `limit: 20` (agotado) indica que sí la tenía pero se consumió.
+
+**Decisión de diseño resultante:**
+Se creó `golden_dataset_smoke.json` — un subconjunto de 5 casos representativos del dataset completo de 10. El script `evaluate_rag.py` acepta el flag `--smoke` para correr esta versión reducida durante desarrollo e iteración rápida, reservando el dataset completo para validaciones finales antes de un release.
+Este patrón (smoke test pequeño vs suite completa) es estándar en testing de software y se traslada naturalmente a evaluación de pipelines RAG: no toda corrida de validación necesita ejecutar el 100% de los casos.
+
+**Mejora identificada para el helper de retry (backlog):**
+`call_with_retry` actualmente trata todo error 429 igual, con backoff exponencial de segundos. Eso es correcto para límites *por minuto*, pero inútil para límites *por día* — ningún backoff de segundos libera cuota diaria agotada. El propio mensaje de error de Google incluye el `quotaId` (`PerMinute` vs `PerDay`), lo cual permitiría que el helper distinga ambos casos y falle rápido con un mensaje claro en el segundo caso, en lugar de agotar reintentos inútilmente.
+---
+
+#### Conceptos aprendidos
+
+**LLM-as-judge**
+Usar un LLM para evaluar las respuestas de otro LLM (o de sí mismo) funciona porque la tarea de evaluación es mucho más acotada que la de generación: en lugar de "genera una respuesta completa y creativa", es "verifica si esta afirmación específica está en este texto" — una tarea cerrada y verificable.
+
+**Por qué Faithfulness y Answer Relevance son independientes**
+Una respuesta puede ser 100% fiel al contexto recuperado (no inventa nada) y aun así no responder lo que el usuario preguntó. Por eso RAGAs (y nuestra implementación) las mide por separado en lugar de un único score combinado — un solo número ocultaría cuál de los dos problemas tiene el sistema.
+
+**Context Precision/Recall son determinísticos, Faithfulness/
+Answer Relevance no**
+Las dos primeras son cálculos de conjuntos sobre IDs (no necesitan LLM). Las otras dos requieren juicio semántico y sí dependen de Gemini. Esto importa para el costo: las métricas basadas en LLM son las que consumen cuota, las basadas en IDs son gratuitas y pueden correr ilimitadamente.
+
+**Cuotas gratuitas de LLMs en producción real**
+Cualquier pipeline de evaluación batch que use un LLM como juez tiene un costo en llamadas que debe calcularse ANTES de diseñar el dataset, no después. La capa gratuita de un proveedor no es un recurso ilimitado para iterar rápido en desarrollo — incluso para 10 casos de prueba.
+
+**DRY entre servicios, no solo dentro de una clase**
+La duplicación de código no solo ocurre dentro de un mismo archivo — ocurre entre servicios distintos que comparten una dependencia externa (en este caso, el SDK de Gemini y su manejo de errores 429). Extraer esa lógica a `app/core/` en lugar de a un servicio específico fue la decisión correcta de capa arquitectónica.
 
 ---
 
@@ -1162,4 +1216,4 @@ Mejoras de ingeniería al pipeline existente, separadas del roadmap de features 
 | 🟢 Baja | Job de re-indexación automática | Pipelines de datos en producción |
 | 🟢 Baja | Fine-tuning del modelo de embeddings | ML avanzado específico de dominio |
 
-*Última actualización: Iteración 003 en progreso — Evaluación con RAGAs*
+*Última actualización: Iteración 003 — evaluación offline implementada con dataset completo y smoke test; validación end-to-end pendiente*
