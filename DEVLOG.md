@@ -888,6 +888,146 @@ La duplicación de código no solo ocurre dentro de un mismo archivo — ocurre 
 
 ---
 
+---
+
+### Iteración 004 — Evaluación online en tiempo real
+
+**Fecha:** 2026
+**Rama:** `feature/online-evaluation`
+**Estado:** ✅ completo
+
+#### Por qué esta iteración y por qué ahora
+
+La Iteración 003 construyó evaluación **offline**: un golden dataset fijo, anotado a mano, que permite responder "¿esta versión del pipeline es mejor o peor que la anterior?". Pero no responde una pregunta distinta e igualmente importante: "¿cómo se está comportando el sistema AHORA, con usuarios reales, ante consultas que nunca anticipé al diseñar el golden dataset?"
+
+Esa pregunta solo la responde evaluación **online** enfocada en medir la calidad de cada respuesta real en producción, no solo de un conjunto fijo de casos de prueba.
+
+#### Diferencia entre offline y online — qué cambia y qué no
+
+```
+                      Offline (Iter. 003)      Online (Iter. 004)
+Cuándo corre          Manual / batch           En cada request real
+Dataset               Golden dataset fijo      Tráfico real, sin
+                       (10-15 casos)             ground truth
+Faithfulness          ✅                        ✅ (se reutiliza igual)
+Answer Relevance      ✅                        ✅ (se reutiliza igual)
+Context Precision     ✅ (necesita ground       ❌ imposible sin
+                       truth)                     ground truth
+Context Recall        ✅ (necesita ground       ❌ imposible sin
+                       truth)                     ground truth
+```
+
+Context Precision y Context Recall quedan exclusivamente en offline porque ambas requieren saber de antemano cuáles productos son relevantes, información que solo existe en el golden dataset anotado. Faithfulness y Answer Relevance son auto-contenidas (evalúan la respuesta contra su propio contexto recuperado, sin necesitar saber la respuesta "correcta" de antemano), por eso sí pueden correr sobre cualquier request real.
+
+#### Decisión de arquitectura para definir dónde vive la responsabilidad de evaluar
+
+**Pregunta:** ¿quién dispara la evaluación en background, el endpoint HTTP o `SearchService`?
+
+**Decisión: el endpoint.**
+
+```
+Capa HTTP (endpoint)     → conoce BackgroundTasks (concepto de FastAPI)
+Capa de orquestación     → SearchService, NO sabe nada de HTTP
+Capa de evaluación       → EvaluationService, ya existe, se reutiliza
+```
+
+`SearchService` no debe recibir `BackgroundTasks` como parámetro. `BackgroundTasks` es un concepto del framework web. Si `SearchService` lo conociera, dejaría de ser invocable desde contextos no-HTTP (como ya lo hace `evaluate_rag.py`, un script sin servidor web de por medio). Mantener esta separación es el mismo principio SRP/DIP aplicado consistentemente desde la Fase 4 del proyecto original.
+
+#### Por qué evaluación asíncrona y no síncrona
+
+Evaluar de forma síncrona (dentro del mismo request) agregaría ~3.5s adicionales de latencia percibida por el usuario (2 llamadas extra a Gemini: Faithfulness + Answer Relevance), sin que el usuario obtenga ningún valor inmediato de esa espera:
+
+```
+Sin evaluación online:  ~4.76s de latencia (lo que ya mide LangFuse)
+Con evaluación síncrona: ~8.26s — usuario espera el doble
+                          por algo que no le aporta nada a él
+Con evaluación asíncrona (BackgroundTasks):
+                          ~4.76s para el usuario (sin cambio)
+                          + evaluación corre después, en paralelo,
+                            sin bloquear la respuesta HTTP
+```
+
+Mismo principio aplicado con LangFuse en la Iteración 002: observabilidad/evaluación nunca debe degradar la experiencia del usuario real.
+
+#### Decisión de muestreo enfocada en no evaluar el 100% del tráfico
+
+La Iteración 003 reveló cuán restrictiva es la cuota gratuita de Gemini (20 requests/día por modelo). Evaluar cada request real en producción consumiría esa cuota rapidísimo, compitiendo directamente con las llamadas que sí generan valor (las respuestas reales a usuarios).
+
+**Decisión:** muestreo configurable vía variable de entorno.
+
+```python
+EVAL_SAMPLE_RATE = 0.2  # evaluar ~20% de los requests reales
+```
+
+Es el mismo patrón que usan sistemas de observabilidad en producción a escala. No se traza/evalúa el 100% del tráfico, se toma una muestra representativa que balancea costo vs visibilidad.
+
+#### Qué se va a construir
+
+- `Settings.eval_sample_rate` — nueva variable de entorno
+- Función `evaluate_in_background()` — invoca `EvaluationService.evaluate_faithfulness()` y `evaluate_answer_relevance()`, envía scores a LangFuse asociados al trace del request real (a diferencia de offline, aquí SÍ hay un trace específico al que asociar el score)
+- Endpoint `/search` actualizado con `BackgroundTasks` y lógica de muestreo (decidir aleatoriamente si este request se evalúa)
+
+#### Qué reutiliza del pipeline actual
+
+- `EvaluationService.evaluate_faithfulness()` y `evaluate_answer_relevance()` — sin modificar, mismo código que en offline
+- `TelemetryClient` — para asociar el score al trace correcto
+- `call_with_retry` — mismo helper compartido de la Iteración 003
+
+#### Qué es nuevo
+
+- Lógica de muestreo (`random.random() < sample_rate`)
+- `BackgroundTasks` en el endpoint
+- Asociación de scores a un `trace_id` específico (online) vs scores sueltos sin trace (offline, como en `evaluate_rag.py`)
+
+#### Preguntas abiertas al inicio de la iteración — resolución
+
+| Pregunta | Estado | Resolución |
+|---|---|---|
+| ¿Cómo se obtiene el trace_id del request actual para asociar el score? | ✅ Resuelta | `lf.get_current_trace_id()` dentro del context manager del trace raíz en `SearchService.search()`. Se propaga vía el dict de resultado hasta el endpoint, que lo pasa a `background_evaluation.py` |
+| ¿Qué pasa si la evaluación en background falla? | ✅ Resuelta | Se captura toda excepción dentro de `evaluate_in_background()` y se loggea como warning — nunca se propaga. El peor caso es perder esa evaluación puntual, sin afectar al usuario ni al pipeline principal |
+| ¿El muestreo debe ser aleatorio simple o garantizar mínimo de señal? | ⚠️ Parcial | Se implementó aleatorio simple (`random.random() < sample_rate`). Con tráfico bajo, esto puede dar largos períodos sin ninguna evaluación. Queda como mejora futura: muestreo garantizado (ej. "al menos 1 de cada N minutos") |
+| ¿Cómo probar sin gastar cuota — modo "forzar evaluación"? | ➡️ Trasladada | No se implementó. Se resolvió de forma indirecta corriendo varios requests seguidos hasta que el muestreo aleatorio disparó una evaluación real. Un flag explícito de "forzar" queda como mejora de DX (developer experience) para iteraciones futuras |
+
+#### Conceptos aprendidos
+
+**La latencia percibida por el usuario es independiente del trabajo en background** 
+La prueba real lo demostró con evidencia, no solo en teoría: el request que disparó evaluación recibió su `200 OK` en el mismo tiempo que los demás (~4.7s), mientras la evaluación seguía corriendo 25 segundos más en background — incluyendo 2 reintentos de rate limit. El usuario nunca esperó por ese trabajo adicional. Esto valida el principio de graceful degradation aplicado a performance, no solo a disponibilidad.
+
+**BackgroundTasks de FastAPI ejecuta después de enviar la respuesta, no en paralelo desde el inicio**
+Es una distinción sutil pero importante: la tarea en background no arranca al mismo tiempo que el request — arranca específicamente después de que la respuesta HTTP ya fue enviada al cliente. Eso significa que el tiempo de la evaluación NUNCA se solapa con el tiempo de respuesta al usuario, ni siquiera parcialmente.
+
+**El retry compartido demostró su valor en un segundo contexto**
+El rate limit por minuto que apareció durante la evaluación online fue resuelto por el mismo `call_with_retry` que ya protegía `evaluate_faithfulness` y `evaluate_answer_relevance` en offline (Iteración 003). No fue necesario escribir ninguna lógica nueva de manejo de errores — la decisión de extraerlo a `app/core/` en lugar de duplicarlo pagó dividendos inmediatamente en esta iteración.
+
+**Separación HTTP vs dominio se mantiene**
+Mantener el principio de separación de responsabildiades de que `SearchService` no conozca FastAPI permitió que el mismo servicio siga siendo invocable desde `evaluate_rag.py` (un script, sin servidor HTTP) sin ningún cambio.
+
+**Verificación visual en el dashboard como paso de cierre necesario**
+Confirmar el comportamiento solo por logs no fue suficiente para cerrar la iteración con confianza. Ver los scores como badges en el trace específico dentro de LangFuse fue la prueba final de que la asociación trace_id → score realmente funciona en el sistema real, no solo en el código que "debería" funcionar.
+
+#### Errores encontrados y resueltos
+
+| Error | Causa | Solución |
+|---|---|---|
+| Ningún request disparaba evaluación en las primeras pruebas | Con sample_rate=0.2 y solo 5 requests, había ~33% de probabilidad estadística de que ninguno se disparara — no era un bug | Se agregaron logs de debug temporales (`trace_id capturado`, `eval check`) para confirmar que la lógica de muestreo funcionaba correctamente antes de descartar mala suerte estadística. Se corrieron más requests hasta confirmar un caso `should_evaluate=True` real |
+| Rate limit (429) durante `evaluate_answer_relevance` en producción real | Mismo límite por minuto ya conocido de la Iteración 003, esta vez disparado por tráfico real en lugar de un script batch | Resuelto automáticamente por `call_with_retry` (2 reintentos con backoff, éxito en el tercer intento) — sin intervención manual, validando que el helper compartido funciona también en el flujo online |
+
+#### Resultados
+Prueba real con 6 requests secuenciales (sample_rate=0.2):
+
+├── 5 requests: should_evaluate=False (sin evaluación, esperado)
+└── 1 request:  should_evaluate=True
+├── trace_id: 6fce8f77d7f0a81beb62daba0b562d5d
+├── Usuario recibió 200 OK en 4.76s (latencia normal, sin cambio)
+└── Evaluación en background (corrió después, sin bloquear):
+├── 2 reintentos por rate limit (429), resueltos automáticamente
+├── faithfulness: 1.00
+└── answer_relevance: 1.00
+
+Confirmado visualmente en el dashboard de LangFuse: el trace `rag_search` muestra los badges `faithfulness: 1.00` y `answer_relevance: 1.00` directamente asociados a ese trace específico, junto a los 3 spans habituales (embed_query, vector_search, gemini_generate).
+
+---
+
 ## Roadmap de features
 
 Nuevas capacidades de producto organizadas por complejidad técnica y valor de aprendizaje. Cada feature documenta qué reutiliza del pipeline actual, qué es nuevo, y en qué etapas se requiere ingeniería clásica, ML tradicional o AI con LLM.
@@ -1216,4 +1356,4 @@ Mejoras de ingeniería al pipeline existente, separadas del roadmap de features 
 | 🟢 Baja | Job de re-indexación automática | Pipelines de datos en producción |
 | 🟢 Baja | Fine-tuning del modelo de embeddings | ML avanzado específico de dominio |
 
-*Última actualización: Iteración 003 — evaluación offline implementada con dataset completo y smoke test; validación end-to-end pendiente*
+*Última actualización: Iteración 004 completa — evaluación online con BackgroundTasks, muestreo y asociación de scores por trace_id*
