@@ -1,10 +1,14 @@
 import logging
+import random
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 
 from app.api.dependencies import get_search_service
 from app.models.search import ProductResult, SearchRequest, SearchResponse
 from app.services.search_service import SearchService
+
+from app.core.config import settings
+from app.services.background_evaluation import evaluate_in_background
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +30,7 @@ router = APIRouter()
 )
 async def search_products(
     request: SearchRequest,
+    background_tasks: BackgroundTasks,
     service: SearchService = Depends(get_search_service),
 ) -> SearchResponse:
     """
@@ -101,6 +106,28 @@ async def search_products(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error interno procesando los resultados.",
         ) from e
+    
+    # Evaluación online con muestreo
+    # Se programa después de construir la respuesta, vía
+    # BackgroundTasks, para que corra después de responder
+    # al usuario sin agregar latencia perceptible.
+    should_evaluate = (
+        result.get("trace_id") is not None
+        and random.random() < settings.eval_sample_rate
+    )
+
+    if should_evaluate:
+        context_for_eval = "\n\n".join(
+            p["document"] for p in result["retrieved_products"]
+        )
+        background_tasks.add_task(
+            evaluate_in_background,
+            trace_id=result["trace_id"],
+            query=result["query"],
+            answer=result["ai_response"],
+            context=context_for_eval if context_for_eval else "(sin productos recuperados)",
+        )
+
 
     return SearchResponse(
         query=result["query"],

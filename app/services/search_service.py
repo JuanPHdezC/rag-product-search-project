@@ -117,6 +117,13 @@ class SearchService:
             },
         ):
 
+            # Capturar el trace_id actual para que el caller (el endpoint)
+            # pueda asociar scores de evaluación online a este trace
+            # específico, después de responder al usuario.
+            current_trace_id = None
+            if lf:
+                current_trace_id = lf.get_current_trace_id()
+
             # ── PASO 1: Embedding de la consulta ──────────────────────────
             # Convertimos el texto del usuario en un vector de 384 dimensiones.
             # El mismo espacio matemático donde están los productos indexados.
@@ -214,6 +221,7 @@ class SearchService:
             "retrieved_products": retrieved_products,
             "ai_response": ai_response,
             "total_found": len(retrieved_products),
+            "trace_id": current_trace_id,
         }
 
         logger.info("Pipeline RAG completado exitosamente")

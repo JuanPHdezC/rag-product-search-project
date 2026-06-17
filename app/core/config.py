@@ -1,3 +1,4 @@
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -38,6 +39,11 @@ class Settings(BaseSettings):
     langfuse_public_key: str | None = None
     langfuse_secret_key: str | None = None
     langfuse_host: str = "https://cloud.langfuse.com"
+
+    # --- Evaluación online ---
+    # Porcentaje de requests reales que se evalúan en background
+    # (Faithfulness + Answer Relevance). 0.2 = ~20% del tráfico.
+    eval_sample_rate: float = Field(default=0.2, ge=0.0, le=1.0)
 
     model_config = SettingsConfigDict(
         env_file=".env",          # Leer desde este archivo
