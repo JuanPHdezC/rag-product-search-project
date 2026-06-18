@@ -1356,4 +1356,105 @@ Mejoras de ingeniería al pipeline existente, separadas del roadmap de features 
 | 🟢 Baja | Job de re-indexación automática | Pipelines de datos en producción |
 | 🟢 Baja | Fine-tuning del modelo de embeddings | ML avanzado específico de dominio |
 
-*Última actualización: Iteración 004 completa — evaluación online con BackgroundTasks, muestreo y asociación de scores por trace_id*
+---
+
+## Roadmap secuenciado
+
+Esta sección define el orden de ejecución entre el Roadmap de features y el Backlog técnico ya descritos arriba, junto con el razonamiento de por qué ese orden y no otro. No duplica las descripciones de cada feature/mejora, solo agrega secuencia y justificación.
+
+### Decisión añadida: Arquitectura de 3 capas (AI / Backend / Frontend)
+
+Hasta la Iteración 004, todo el proyecto **es** la capa de IA. No existía una distinción explícita entre esto y un backend de negocio o un frontend. Esta decisión se hizo evidente al planear el Carrito Inteligente: requiere persistencia de usuarios y carritos, que es lógica de negocio, no de IA. Meterla dentro del servicio de IA actual contaminaría sus responsabilidades (mismo principio ya aplicado con `SearchService` no conociendo HTTP).
+
+**Decisión:** reestructurar el repositorio en 3 capas, en el mismo repo (no fork), preservando todo el historial de commits y el DEVLOG:
+
+```
+rag-product-search-project/
+├── ai-service/      ← todo lo construido hasta Iteración 004
+├── backend/         ← nuevo: usuarios, carritos, lógica de negocio
+├── frontend/         ← nuevo: UI (se construye más adelante)
+├── DEVLOG.md         ← se mantiene en la raíz, sigue documentando todo
+└── README.md         ← se actualiza cuando se reestructura, no antes
+```
+
+**Por qué mismo repositorio y no fork:** un fork pierde el historial de commits conectado al DEVLOG.
+
+**Por qué el Backend mínimo se inserta antes del Carrito y no después:** no es una tarea independiente que se pueda posponer, es un prerequisito real. El Carrito necesita un lugar donde vivan perfiles de usuario (soltero, hijos, mascotas...) y carritos persistentes, y ese lugar no debe ser `ai-service/`.
+
+**Por qué el Frontend se posterga hasta el paso 13:** construir UI antes sería prematuro, no habría suficiente
+funcionalidad real (Búsqueda, Q&A, Carrito, Recomendaciones, Comparador) para justificar una interfaz completa. El Frontend tiene más valor cuando consume varias features ya maduras.
+
+### Orden de ejecución y razonamiento
+
+```
+1. 🔴 Tests unitarios con pytest y mocks 
+Prerequisito de seguridad antes de construir algo tan complejo como un agente (Carrito Inteligente).
+
+2. 🟢 Feature 5 — Q&A sobre Productos Específicos 
+Calentamiento de bajo riesgo. Reutiliza 100% el pipeline actual, sin infraestructura nueva. Dificultad "Baja" en el roadmap original.
+
+3. 🆕 Reestructuración del repo + Backend mínimo ai-service/ + backend/ (modelos de Usuario y Carrito, persistencia simple). 
+Prerequisito real de la Feature 1, no postergable una vez se llega ahí. README se actualiza en este punto.
+
+4. 🔴 Feature 1 — Carrito Inteligente (núcleo, sin OCR) 
+Parsing de objetivo + descomposición + búsqueda multi-categoría + personalización por perfil. El mayor salto de aprendizaje nuevo: Agentic RAG, tool calling, orquestación multi-paso.
+
+5. 🟡 Feature 6 — OCR como servicio transversal
+Depende explícitamente de la Feature 1 (lista de mercado, recibo). Se integra como segunda mitad del Carrito.
+
+6. 🟡 Observabilidad y evaluación del Carrito
+El agente necesita su propia instrumentación con LangFuse y métricas específicas para flujos multi-pasos. Faithfulness y Answer Relevance no capturan bien la calidad de una orquestación de varios pasos.
+
+7. 🟡 Feature 4 — Detección de Intención y Routing
+Recién tiene sentido real con múltiples pipelines existiendo (Búsqueda, Q&A, Carrito) entre los cuales rutear. Antes, habría sido routing trivial sin valor.
+
+8. 🟡 Hybrid search (semántico + BM25)
+Mejora transversal en la cual se beneficia a todos los pipelines existentes simultáneamente, más valor cuantos más existan.
+
+9. 🟡 Re-ranking con cross-encoder
+Mismo razonamiento que Hybrid search.
+
+10. 🟢 Feature 2 — Recomendaciones Personalizadas
+Aprovecha el historial de usuario real que ya existe gracias al Backend (paso 3). Antes no habría datos de comportamiento reales para hacer recomendaciones.
+
+11. 🟢 Feature 3 — Comparador Semántico de Productos
+Sin dependencias bloqueantes. Cierre de bajo riesgo.
+
+12. 🟢 Caché de embeddings
+Más beneficio cuantos más pipelines compiten por el mismo modelo de embeddings. Tiene más sentido con varios pipelines ya construidos que al principio.
+
+13. 🆕 Frontend
+Suficiente funcionalidad construida (Búsqueda, Q&A, Carrito, Recomendaciones, Comparador) para justificar una UI real completa.
+
+14. 🟢 Docker
+Empaquetar para deployment, cuando el sistema ya está relativamente completo y vale la pena "congelarlo".
+
+15. 🟢 Job de re-indexación automática
+Solo relevante si el catálogo cambia con frecuencia. Baja urgencia en este proyecto mientras se trabaja con 12 productos fijos.
+
+16. 🟢 Fine-tuning del modelo de embeddings
+Pieza más "investigación" del backlog. Requiere dataset de entrenamiento propio del dominio. Cierre/extra.
+```
+
+### Criterio general aplicado para ordenar
+
+```
+1. ¿Es prerequisito de seguridad para construir algo más complejo?
+   → tests, backend mínimo
+
+2. ¿Enseña conceptos NUEVOS de AI/ML Engineering, o refuerza
+   lo ya visto?
+   → prioriza lo nuevo (Carrito, OCR) sobre lo ya dominado
+     (más observabilidad, más patrones de DI)
+
+3. ¿Depende técnicamente de algo que todavía no existe?
+   → OCR depende del Carrito, Recomendaciones depende del
+     Backend, Frontend depende de tener features maduras
+
+4. ¿Qué tan cara es la deuda de no hacerlo ahora vs después?
+   → mejoras transversales (hybrid search, re-ranking, caché)
+     se posponen hasta que existan múltiples pipelines que
+     se beneficien simultáneamente
+```
+
+*Última actualización: Roadmap secuenciado agregado — orden de ejecución completo con arquitectura de 3 capas (AI/Backend/Frontend)*
