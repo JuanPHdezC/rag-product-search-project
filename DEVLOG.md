@@ -1028,6 +1028,105 @@ Confirmado visualmente en el dashboard de LangFuse: el trace `rag_search` muestr
 
 ---
 
+---
+
+### Iteración 005 — Tests unitarios con pytest y mocks
+
+**Fecha:** 2026
+**Rama:** `feature/unit-tests`
+**Estado:** 🚧 en progreso
+
+#### Por qué esta iteración y por qué ahora
+
+Las 4 iteraciones anteriores construyeron lógica real (pipeline RAG, observabilidad, evaluación offline y online) sin ningún test automatizado que la proteja. Antes de avanzar al Carrito Inteligente, la pieza más compleja del roadmap con orquestación multi-paso, se necesita una red de seguridad que permita detectar regresiones rápido, en lugar de descubrirlas manualmente como pasó con los rate limits de Gemini.
+
+#### Qué es testing unitario y por qué "con mocks" es la parte difícil
+
+Un test unitario prueba **una unidad de código aislada**, sin depender de servicios externos reales (Gemini, ChromaDB, LangFuse). El reto de este proyecto específicamente es que casi todo está construido con **Dependency Injection**, lo cual hace el testing posible sin reescribir nada.
+
+```
+SearchService recibe:
+├── embedding_service   → en producción: EmbeddingService real
+├── vector_store        → en producción: VectorStoreRepository real
+├── gemini_service      → en producción: GeminiService real
+└── telemetry            → en producción: TelemetryClient real
+
+En tests, se inyectan DOBLES (mocks) en lugar de las instancias
+reales:
+├── embedding_service   → Mock que devuelve un vector falso fijo
+├── vector_store        → Mock que devuelve productos falsos fijos
+├── gemini_service      → Mock que devuelve una respuesta falsa fija
+└── telemetry            → Mock o instancia con is_enabled=False
+```
+
+Esto es exactamente la razón por la que se insistió tanto en DI desde la Fase 4 del proyecto original — sin esa decisión temprana, testear `SearchService` hoy sería mucho más costoso (requeriría mockear librerías completas en lugar de solo las interfaces propias).
+
+#### Qué se va a testear y con qué prioridad
+
+```
+Prioridad alta — lógica de negocio pura, sin I/O:
+├── SearchService._build_where_filter()
+├── Product (validaciones de Pydantic: pattern, gt, min_length)
+├── EvaluationService.evaluate_context_precision()  (determinístico,
+│   sin LLM, fácil de testear con casos exactos)
+└── EvaluationService.evaluate_context_recall()      (idem)
+
+Prioridad media — orquestación con mocks:
+├── SearchService.search() — flujo completo con las 4
+│   dependencias mockeadas
+├── VectorStoreRepository — validaciones de dimensiones y
+│   longitudes consistentes (sin necesitar ChromaDB real)
+└── call_with_retry() — simular 429 y verificar que reintenta
+    con el backoff correcto
+
+Prioridad baja / fuera de alcance por ahora:
+├── EmbeddingService — requiere el modelo real cargado,
+│   se considera test de integración, no unitario
+├── GeminiService.generate_response() — llamada real a Gemini,
+│   mismo caso, es integración
+└── EvaluationService.evaluate_faithfulness() y
+    evaluate_answer_relevance() — dependen de Gemini real
+    para tener sentido semántico, no se mockean de forma útil
+```
+
+#### Decisión de diseño — qué SÍ y qué NO se mockea
+
+**Se mockean:** servicios externos costosos o no determinísticos (Gemini, ChromaDB, modelos de embeddings, LangFuse).
+
+**No se mockean:** lógica pura de Python sin I/O (validaciones de Pydantic, cálculos determinísticos como Context Precision/Recall, construcción de filtros).
+
+**Criterio general:** si una función no llama a una red, un modelo de ML, o tiene aleatoriedad, no necesita mock, se testea directamente con inputs/outputs esperados.
+
+#### Qué se va a construir
+
+- `pytest` + `pytest-mock` como dependencias de desarrollo
+- `tests/conftest.py` — fixtures compartidas (mocks reutilizables de cada servicio)
+- `tests/test_models.py` — validaciones de `Product`, `ProductResult`
+- `tests/test_search_service.py` — `SearchService.search()` con todas las dependencias mockeadas
+- `tests/test_evaluation_service.py` — métricas determinísticas (Context Precision, Context Recall)
+- `tests/test_vector_store.py` — validaciones de
+  `VectorStoreRepository` sin ChromaDB real
+- `tests/test_gemini_retry.py` — `call_with_retry` con simulación de 429
+
+#### Qué reutiliza del pipeline actual
+
+Toda la arquitectura de DI ya construida — los tests son posibles precisamente por las decisiones de arquitectura de iteraciones anteriores (Repository, Factory + lru_cache, inyección explícita de dependencias en `SearchService`).
+
+#### Qué es nuevo
+
+- Carpeta `tests/` con estructura real (ya existía vacía desde la Fase 1, nunca se usó hasta ahora)
+- `pytest.ini` o configuración en `pyproject.toml`
+- Mocks/fixtures para cada servicio externo
+
+#### Preguntas abiertas al inicio de la iteración
+
+- ¿Cómo se mockea limpiamente el patrón Factory + `lru_cache` (`get_embedding_service()`, etc.) sin que el caché interfiera entre tests?
+- ¿Vale la pena medir cobertura de código (coverage) desde ya, o es prematuro con tan pocos tests?
+- ¿Cómo se integran estos tests con LangFuse? ¿Deben generar traces reales, o se debe deshabilitar telemetría durante tests? (pregunta heredada de Iteración 002)
+- ¿Se agrega un GitHub Action para correr tests automáticamente en cada PR, o se mantiene manual por ahora?
+
+---
+
 ## Roadmap de features
 
 Nuevas capacidades de producto organizadas por complejidad técnica y valor de aprendizaje. Cada feature documenta qué reutiliza del pipeline actual, qué es nuevo, y en qué etapas se requiere ingeniería clásica, ML tradicional o AI con LLM.
@@ -1457,4 +1556,4 @@ Pieza más "investigación" del backlog. Requiere dataset de entrenamiento propi
      se beneficien simultáneamente
 ```
 
-*Última actualización: Roadmap secuenciado agregado — orden de ejecución completo con arquitectura de 3 capas (AI/Backend/Frontend)*
+*Última actualización: Iteración 005 en progreso — Tests unitarios*
