@@ -1034,7 +1034,7 @@ Confirmado visualmente en el dashboard de LangFuse: el trace `rag_search` muestr
 
 **Fecha:** 2026
 **Rama:** `feature/unit-tests`
-**Estado:** 🚧 en progreso
+**Estado:** ✅ completo — 43 tests, suite corre en 0.53s
 
 #### Por qué esta iteración y por qué ahora
 
@@ -1118,12 +1118,49 @@ Toda la arquitectura de DI ya construida — los tests son posibles precisamente
 - `pytest.ini` o configuración en `pyproject.toml`
 - Mocks/fixtures para cada servicio externo
 
-#### Preguntas abiertas al inicio de la iteración
+#### Preguntas abiertas al inicio de la iteración — resolución
 
-- ¿Cómo se mockea limpiamente el patrón Factory + `lru_cache` (`get_embedding_service()`, etc.) sin que el caché interfiera entre tests?
-- ¿Vale la pena medir cobertura de código (coverage) desde ya, o es prematuro con tan pocos tests?
-- ¿Cómo se integran estos tests con LangFuse? ¿Deben generar traces reales, o se debe deshabilitar telemetría durante tests? (pregunta heredada de Iteración 002)
-- ¿Se agrega un GitHub Action para correr tests automáticamente en cada PR, o se mantiene manual por ahora?
+| Pregunta | Estado | Resolución |
+|---|---|---|
+| ¿Cómo mockear servicios detrás de Factory + lru_cache sin contaminar entre tests? | ✅ Resuelta | No se mockean las factory functions — se instancia `SearchService` directamente con mocks inyectados por constructor, sin pasar nunca por `get_embedding_service()` etc. La DI ya existente hizo esto posible sin ningún workaround |
+| ¿Vale la pena medir cobertura desde ya? | ➡️ Trasladada | Con 43 tests recién creados, prematuro priorizar el número de cobertura sobre qué se prueba. Se revisará en una iteración futura cuando el Carrito Inteligente añada más superficie de código |
+| ¿Cómo se integran los tests con LangFuse? | ✅ Resuelta | Fixture `mock_telemetry_disabled` con `is_enabled=False` — los tests nunca generan traces reales, sin necesidad de deshabilitar LangFuse a nivel de configuración global |
+| ¿GitHub Action para correr tests en cada PR? | ➡️ Trasladada | No implementado en esta iteración — CI/CD queda como mejora de infraestructura para cuando el proyecto tenga más colaboradores o se acerque a un release real |
+
+
+#### Conceptos aprendidos
+
+**La DI no es solo "buena práctica", es lo que hace el testing posible**
+Las 4 iteraciones anteriores insistieron en Dependency Injection por principio (SOLID, testabilidad mencionada en abstracto). Esta iteración demostró el beneficio concreto: `SearchService` se testeó completo, con sus 4 dependencias, sin tocar Gemini, ChromaDB ni sentence-transformers.
+
+**`__new__` sin `__init__` como patrón para clases con métodos mixtos**
+`EvaluationService` y `VectorStoreRepository` mezclan métodos puros (validaciones, cálculos) con métodos que requieren estado costoso (cliente de Gemini, conexión a ChromaDB). `Clase.__new__(Clase)` permite testear los métodos puros sin pagar el costo de inicializar lo que no se va a usar en ese test específico.
+
+**Mockear `time.sleep` convierte tests de "lentos por diseño" en instantáneos**
+El backoff exponencial de `call_with_retry` (2s, 4s, 8s...) existe por una buena razón en producción, pero en un test no aporta nada esperar ese tiempo real. `mocker.patch("...time.sleep")` prueba la lógica del backoff (cuántas veces reintenta, cuándo se rinde) sin pagar su costo temporal.
+
+**Velocidad de la suite como señal de diseño, no solo de conveniencia**
+43 tests en 0.53s es la consecuencia directa de que ningún test toca red, disco, o modelos pesados. Si en el futuro un test tarda segundos en lugar de milisegundos, es señal de que algo no está bien mockeado, no que "los tests son lentos".
+
+**Tests como documentación ejecutable de reglas de negocio**
+Casos como `test_negative_case_with_no_expected_relevant_gives_perfect_score` documentan, con código que se ejecuta y verifica, una decisión de diseño sutil (Iteración 003: recall es trivialmente perfecto si no había nada relevante que encontrar) que de otra forma solo viviría en un comentario o en el DEVLOG, sin garantía de que el código siga cumpliéndola con el tiempo.
+
+---
+
+#### Resultados
+43 tests, 0 fallos, 0.53 segundos totales
+
+tests/test_models.py             11 tests — validaciones Pydantic
+
+tests/test_search_service.py     13 tests — orquestación + filtros
+
+tests/test_evaluation_service.py  9 tests — Context Precision/Recall
+
+tests/test_vector_store.py        6 tests — validaciones defensivas
+
+tests/test_gemini_retry.py        4 tests — backoff y rate limit
+
+Cobertura por diseño (no medida con herramienta de coverage): toda la lógica de negocio pura y toda la orquestación con DI quedan protegidas. Fuera de alcance intencional: llamadas reales a Gemini (`generate_response`, `evaluate_faithfulness`, `evaluate_answer_relevance`) y carga del modelo de embeddings, se consideran tests de integración, no unitarios.
 
 ---
 
@@ -1556,4 +1593,4 @@ Pieza más "investigación" del backlog. Requiere dataset de entrenamiento propi
      se beneficien simultáneamente
 ```
 
-*Última actualización: Iteración 005 en progreso — Tests unitarios*
+*Última actualización: Iteración 005 completa — 43 tests unitarios, suite completa en menos de 1 segundo*
