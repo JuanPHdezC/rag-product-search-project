@@ -1242,6 +1242,7 @@ Mezclar ambos casos de uso en un solo endpoint violaría el principio de contrat
 - `app/models/qa.py` — `QARequest`, `QAResponse` con validaciones
 - `app/api/v1/endpoints/qa.py` — `POST /api/v1/qa`
 - Prompt nuevo en una extensión de `GeminiService` (o método separado) para respuesta puntual con cita
+- Evaluación online del endpoint `/qa` siguiendo mismo patrón `evaluate_in_background` de la Iteración 004, enchufado al nuevo endpoint (parte del Definition of Done)
 
 #### Qué reutiliza del pipeline actual
 
@@ -1259,12 +1260,14 @@ Mezclar ambos casos de uso en un solo endpoint violaría el principio de contrat
 - Endpoint `/qa`
 - Tests correspondientes (siguiendo el patrón de Iteración 005)
 
-#### Preguntas abiertas al inicio de la iteración
+#### Preguntas abiertas al inicio de la iteración — resolución
 
-- ¿Cómo se determina si la pregunta del usuario ya menciona un producto específico por nombre, vs si hay que buscarlo primero?
-- ¿Qué pasa si la pregunta no puede responderse con la ficha técnica disponible (ej: "¿viene en color rosa?" y el catálogo no lo dice)?
-- ¿La cita debe ser un fragmento textual exacto del `document` indexado, o se permite paráfrasis?
-- ¿Vale la pena reutilizar `EvaluationService.evaluate_faithfulness` aquí también, dado que el riesgo de alucinación es el mismo problema que en `/search`?
+| Pregunta | Estado | Resolución |
+|---|---|---|
+| ¿Cómo determinar si la pregunta ya menciona un producto específico vs hay que buscarlo? | ✅ Resuelta | `product_id` opcional en `QARequest`. Si viene → lookup directo con `get_by_id()`, saltando embedding+búsqueda. Si no viene → `search(n_results=1)` para identificar el producto más probable. Cubre ambos casos de uso sin complejidad adicional significativa. |
+| ¿Qué pasa si la pregunta no puede responderse con la ficha disponible? | ✅ Resuelta | El prompt instruye explícitamente a Gemini a responder "no tengo esa información" en lugar de inventar. Mismo principio de Faithfulness ya aplicado en `/search`. NUNCA se generan especificaciones, colores o medidas que no estén en el documento indexado. |
+| ¿La cita debe ser fragmento textual exacto o se permite paráfrasis? | ✅ Resuelta | Cita = `source_document` completo extraído por código determinístico, devuelto en `QAResponse`. El LLM genera la respuesta en lenguaje natural, pero la fuente viene del documento indexado real — nunca generada por el LLM. Reduce superficie de alucinación, consistente con la filosofía de `/search` (datos duros del código, lenguaje natural del LLM). |
+| ¿Vale la pena reutilizar `evaluate_faithfulness` aquí también? | ✅ Resuelta | Sí, y es no negociable. A partir de esta iteración, evaluación online es parte del Definition of Done de toda feature que genere respuestas con LLM. El mecanismo ya existe — enchufarlo al endpoint `/qa` es trabajo mínimo (~5 líneas). Ver sección "Definition of Done" en Roadmap secuenciado. |
 
 ---
 
@@ -1624,6 +1627,19 @@ rag-product-search-project/
 **Por qué el Frontend se posterga hasta el paso 13:** construir UI antes sería prematuro, no habría suficiente
 funcionalidad real (Búsqueda, Q&A, Carrito, Recomendaciones, Comparador) para justificar una interfaz completa. El Frontend tiene más valor cuando consume varias features ya maduras.
 
+### Definition of Done (a partir de la Iteración 006)
+
+Toda feature nueva que genere respuestas con un LLM debe incluir, en la misma iteración, sin excepción:
+
+1. Funcionalidad implementada y funcionando end-to-end
+2. Tests unitarios del código nuevo
+3. Observabilidad con LangFuse (traces del nuevo flujo)
+4. Evaluación online (Faithfulness + Answer Relevance vía BackgroundTasks con muestreo)
+
+El mecanismo de evaluación ya existe desde las Iteraciones 003-004. Implementarlo en cada feature nueva es reutilizar lo construido, no construir algo nuevo — el costo marginal es mínimo (~5 líneas) y la deuda de omitirlo se acumula rápido cuando hay múltiples features sin evaluar.
+
+**Excepción documentada:** si una feature no genera respuestas con LLM (ej: endpoint de solo búsqueda sin generación), el punto 4 no aplica — pero se documenta explícitamente por qué en el DEVLOG de esa iteración, nunca se omite silenciosamente.
+
 ### Orden de ejecución y razonamiento
 
 ```
@@ -1695,6 +1711,8 @@ Pieza más "investigación" del backlog. Requiere dataset de entrenamiento propi
    → mejoras transversales (hybrid search, re-ranking, caché)
      se posponen hasta que existan múltiples pipelines que
      se beneficien simultáneamente
+
+
 ```
 
-*Última actualización: Iteración 006 en progreso — Q&A sobre Productos*
+*Última actualización: Iteración 006 — Definition of Done establecido, preguntas de diseño resueltas*
