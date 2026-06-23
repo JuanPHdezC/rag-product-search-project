@@ -186,3 +186,44 @@ class VectorStoreRepository:
     def is_empty(self) -> bool:
         """Verifica si la colección está vacía."""
         return self._collection.count() == 0
+    
+    def get_by_id(self, product_id: str) -> dict | None:
+        """
+        Recupera un producto específico por su id exacto.
+
+        A diferencia de search() que busca por similitud semántica,
+        este método hace un lookup determinístico. Solo hay 2 caminos. 
+        El producto existe con ese id exacto, o no existe. 
+        No hay "aproximación".
+
+        Se usa en QAService cuando el cliente ya sabe qué producto
+        quiere consultar (ej: el usuario está viendo la ficha de un
+        producto y hace una pregunta sobre él). Evita gastar una
+        llamada de embedding+búsqueda innecesaria.
+
+        Args:
+            product_id: id exacto del producto (ej: "prod_001")
+
+        Returns:
+            Dict con id, document, metadata y similarity_score=1.0
+            si el producto existe, None si no existe.
+        """
+        if not product_id or not product_id.strip():
+            raise ValueError("product_id no puede estar vacío")
+
+        results = self._collection.get(
+            ids=[product_id],
+            include=["documents", "metadatas"],
+        )
+
+        # ChromaDB devuelve listas vacías si el id no existe
+        # Verificamos explícitamente(no lanza excepción) 
+        if not results["ids"]:
+            return None
+
+        return {
+            "id": results["ids"][0],
+            "document": results["documents"][0],
+            "metadata": results["metadatas"][0],
+            "similarity_score": 1.0,  # lookup exacto = relevancia perfecta
+        }
