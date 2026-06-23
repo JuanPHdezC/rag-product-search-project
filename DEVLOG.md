@@ -1168,7 +1168,7 @@ Cobertura por diseño (no medida con herramienta de coverage): toda la lógica d
 
 **Fecha:** 2026
 **Rama:** `feature/product-qa`
-**Estado:** 🚧 en progreso
+**Estado:** ✅ completo — Definition of Done cumplido al 100%
 
 #### Por qué esta iteración y por qué ahora
 
@@ -1268,6 +1268,43 @@ Mezclar ambos casos de uso en un solo endpoint violaría el principio de contrat
 | ¿Qué pasa si la pregunta no puede responderse con la ficha disponible? | ✅ Resuelta | El prompt instruye explícitamente a Gemini a responder "no tengo esa información" en lugar de inventar. Mismo principio de Faithfulness ya aplicado en `/search`. NUNCA se generan especificaciones, colores o medidas que no estén en el documento indexado. |
 | ¿La cita debe ser fragmento textual exacto o se permite paráfrasis? | ✅ Resuelta | Cita = `source_document` completo extraído por código determinístico, devuelto en `QAResponse`. El LLM genera la respuesta en lenguaje natural, pero la fuente viene del documento indexado real — nunca generada por el LLM. Reduce superficie de alucinación, consistente con la filosofía de `/search` (datos duros del código, lenguaje natural del LLM). |
 | ¿Vale la pena reutilizar `evaluate_faithfulness` aquí también? | ✅ Resuelta | Sí, y es no negociable. A partir de esta iteración, evaluación online es parte del Definition of Done de toda feature que genere respuestas con LLM. El mecanismo ya existe — enchufarlo al endpoint `/qa` es trabajo mínimo (~5 líneas). Ver sección "Definition of Done" en Roadmap secuenciado. |
+
+#### Errores encontrados y resueltos
+
+Ninguno. El endpoint funcionó en el primer intento. La arquitectura de DI y los patrones ya establecidos (Repository, TelemetryClient, BackgroundTasks) permitieron implementar la feature sin sorpresas.
+
+#### Conceptos aprendidos
+
+**Lookup directo vs búsqueda semántica ¿cuándo usar cada uno?**
+No toda consulta a una base vectorial debe ser por similitud. Cuando el cliente ya conoce el identificador exacto del documento que necesita (`product_id`), un lookup directo es más correcto, más barato (sin embedding) y más predecible que una búsqueda semántica que podría devolver el producto equivocado con un score alto. El `product_id` opcional en `QARequest` captura ambos casos de uso en un solo endpoint.
+
+**Prompt engineering para anti-alucinación**
+La instrucción "si la información NO está en la ficha, di que no la tienes" no es suficiente por sí sola. Debe ser explícita, específica y estar en el system prompt (no en el user prompt) para que el modelo la aplique consistentemente. La Prueba 3 confirmó que el prompt diseñado funciona en producción real: Gemini respondió "No tengo esa información disponible en la ficha técnica" ante una pregunta de color que no estaba en el catálogo.
+
+**Definition of Done como disciplina real, no burocracia**
+El endpoint `/qa` se implementó con observabilidad y evaluación online en la misma iteración — no en "la próxima". El costo marginal fue mínimo (~5 líneas reutilizando mecanismos ya existentes). El resultado: el dashboard de LangFuse ya muestra traces de `/qa` con el mismo nivel de visibilidad que `/search`, desde el primer deploy.
+
+**Árbol de spans dinámico según flujo**
+El mismo `TelemetryClient.observation()` genera árboles de spans distintos dependiendo del flujo de ejecución: con `product_id` aparece `qa_lookup_by_id`; sin él aparecen `qa_embed_question` + `qa_find_product`. LangFuse muestra esto claramente, lo que facilita diagnosticar diferencias de latencia entre ambos flujos.
+
+#### Resultados
+
+```
+3 pruebas end-to-end exitosas:
+├── Inferencia semántica: identificó Sony WH-1000XM5 desde
+│   lenguaje natural, product_found_via="semantic_search"
+├── Lookup directo: saltó embedding+búsqueda, respuesta en ~0.8s
+│   vs ~3.5s de inferencia semántica, product_found_via="direct_id"
+└── Anti-alucinación: "No tengo esa información disponible en
+    la ficha técnica" ante pregunta de color no indexado ✅
+
+52 tests totales, 0 fallos, suite completa en <1s
+
+Observabilidad confirmada en LangFuse:
+├── Flujo con product_id: qa_pipeline → qa_lookup_by_id → qa_generate
+└── Flujo sin product_id: qa_pipeline → qa_embed_question
+                                      → qa_find_product → qa_generate
+```
 
 ---
 
@@ -1715,4 +1752,4 @@ Pieza más "investigación" del backlog. Requiere dataset de entrenamiento propi
 
 ```
 
-*Última actualización: Iteración 006 — Definition of Done establecido, preguntas de diseño resueltas*
+*Última actualización: Iteración 006 completa — Q&A sobre productos con observabilidad y evaluación online*
