@@ -5,6 +5,7 @@ from app.repositories.vector_store import VectorStoreRepository
 from app.services.embedding_service import get_embedding_service
 from app.services.gemini_service import get_gemini_service
 from app.services.search_service import SearchService
+from app.services.qa_service import QAService
 
 
 @lru_cache(maxsize=1)
@@ -49,3 +50,19 @@ def get_search_service() -> SearchService:
         gemini_service=get_gemini_service(),
         telemetry=get_telemetry_client(),
     )
+
+@lru_cache(maxsize=1)
+def get_qa_service_instance() -> QAService:
+    """
+    Instancia única de QAService.
+    """
+    return QAService(
+        embedding_service=get_embedding_service(),
+        vector_store=get_vector_store(),
+        gemini_service=get_gemini_service(),
+        telemetry=get_telemetry_client(),
+    )
+
+def get_qa_service() -> QAService:
+    """Factory para FastAPI Depends."""
+    return get_qa_service_instance()

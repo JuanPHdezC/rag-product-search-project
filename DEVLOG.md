@@ -1164,6 +1164,150 @@ Cobertura por diseño (no medida con herramienta de coverage): toda la lógica d
 
 ---
 
+### Iteración 006 — Q&A sobre Productos Específicos
+
+**Fecha:** 2026
+**Rama:** `feature/product-qa`
+**Estado:** ✅ completo — Definition of Done cumplido al 100%
+
+#### Por qué esta iteración y por qué ahora
+
+Primera feature nueva del roadmap de producto (a diferencia de las iteraciones 002-005, que fueron infraestructura: observabilidad, evaluación, tests). Funciona como calentamiento de bajo riesgo antes del Carrito Inteligente, la feature de mayor complejidad del roadmap, porque reutiliza el 100% del pipeline existente sin requerir infraestructura nueva.
+
+#### Qué resuelve esta feature
+
+```
+Búsqueda semántica (lo que ya existe)
+──────────────────────────────────────
+"audífonos con cancelación de ruido"
+   → lista de productos rankeados
+
+Q&A sobre producto específico (lo nuevo)
+──────────────────────────────────────
+"¿el Sony WH-1000XM5 es resistente al agua?"
+   → respuesta puntual basada en la ficha técnica
+     de ese producto específico, con cita de la fuente
+```
+
+La diferencia de fondo: búsqueda semántica responde "¿qué productos son relevantes?". Q&A responde "¿qué dice este producto específico sobre X?" Son dos preguntas distintas sobre el mismo catálogo.
+
+#### Diseño del pipeline — qué cambia y qué se reutiliza
+
+```
+1. Identificar el producto referenciado en la pregunta
+   → ML: búsqueda semántica (reutiliza EmbeddingService +
+     VectorStoreRepository exactamente como hoy)
+
+2. Recuperar la ficha técnica completa de ESE producto
+   → Ingeniería: lookup directo por id, no por similitud
+     (nuevo: VectorStoreRepository necesita un método get_by_id)
+
+3. Responder la pregunta usando solo esa ficha como contexto
+   → AI/LLM: reutiliza GeminiService, pero con un prompt
+     distinto al de búsqueda (un producto, no un ranking)
+
+4. Citar la fuente de la respuesta
+   → Ingeniería: extraer el fragmento exacto usado, no generar
+     una cita nueva con el LLM (evita alucinación de citas)
+```
+
+Aplicando el mismo criterio Ingeniería/ML/AI que se documentó en
+el Roadmap de features original:
+
+| Etapa | Tipo | Justificación |
+|---|---|---|
+| Identificar producto referenciado | ML | Búsqueda semántica sobre el catálogo, igual que hoy |
+| Recuperar ficha técnica completa | Ingeniería | Lookup por id, regla explícita — no similitud |
+| Responder la pregunta | AI/LLM | Razonamiento sobre un documento específico |
+| Citar la fuente | Ingeniería | Extraer fragmento real, no generarlo con el LLM |
+
+#### Decisión de diseño — nuevo endpoint vs reutilizar /search
+
+**Decisión: nuevo endpoint `POST /api/v1/qa`**, no extender `/search`.
+
+```
+/search  → input: consulta abierta
+         → output: lista rankeada de productos + respuesta general
+
+/qa      → input: pregunta + (opcional) id de producto específico
+         → output: respuesta puntual + cita + producto referenciado
+```
+
+Mezclar ambos casos de uso en un solo endpoint violaría el principio de contratos explícitos ya aplicado en `SearchRequest`/`SearchResponse`. Un cliente que llama `/search` espera una lista rankeada, no una respuesta puntual con cita. Mismo razonamiento que ya se aplicó al diseñar Feature 4 (Routing) en el roadmap: cada intención del usuario tiene un contrato de respuesta distinto.
+
+#### Qué se va a construir
+
+- `VectorStoreRepository.get_by_id()` — lookup directo, nuevo método
+- `app/services/qa_service.py` — orquestador del flujo Q&A
+- `app/models/qa.py` — `QARequest`, `QAResponse` con validaciones
+- `app/api/v1/endpoints/qa.py` — `POST /api/v1/qa`
+- Prompt nuevo en una extensión de `GeminiService` (o método separado) para respuesta puntual con cita
+- Evaluación online del endpoint `/qa` siguiendo mismo patrón `evaluate_in_background` de la Iteración 004, enchufado al nuevo endpoint (parte del Definition of Done)
+
+#### Qué reutiliza del pipeline actual
+
+- `EmbeddingService` — sin cambios
+- `VectorStoreRepository.search()` — para identificar el producto cuando el usuario no da el id explícitamente
+- `GeminiService` — mismo cliente, prompt nuevo
+- `TelemetryClient` — mismo patrón de instrumentación que `/search`
+- Patrón completo de DI + Dependency injection de FastAPI
+
+#### Qué es nuevo
+
+- `VectorStoreRepository.get_by_id()`
+- `QAService`
+- Modelos `QARequest` / `QAResponse`
+- Endpoint `/qa`
+- Tests correspondientes (siguiendo el patrón de Iteración 005)
+
+#### Preguntas abiertas al inicio de la iteración — resolución
+
+| Pregunta | Estado | Resolución |
+|---|---|---|
+| ¿Cómo determinar si la pregunta ya menciona un producto específico vs hay que buscarlo? | ✅ Resuelta | `product_id` opcional en `QARequest`. Si viene → lookup directo con `get_by_id()`, saltando embedding+búsqueda. Si no viene → `search(n_results=1)` para identificar el producto más probable. Cubre ambos casos de uso sin complejidad adicional significativa. |
+| ¿Qué pasa si la pregunta no puede responderse con la ficha disponible? | ✅ Resuelta | El prompt instruye explícitamente a Gemini a responder "no tengo esa información" en lugar de inventar. Mismo principio de Faithfulness ya aplicado en `/search`. NUNCA se generan especificaciones, colores o medidas que no estén en el documento indexado. |
+| ¿La cita debe ser fragmento textual exacto o se permite paráfrasis? | ✅ Resuelta | Cita = `source_document` completo extraído por código determinístico, devuelto en `QAResponse`. El LLM genera la respuesta en lenguaje natural, pero la fuente viene del documento indexado real — nunca generada por el LLM. Reduce superficie de alucinación, consistente con la filosofía de `/search` (datos duros del código, lenguaje natural del LLM). |
+| ¿Vale la pena reutilizar `evaluate_faithfulness` aquí también? | ✅ Resuelta | Sí, y es no negociable. A partir de esta iteración, evaluación online es parte del Definition of Done de toda feature que genere respuestas con LLM. El mecanismo ya existe — enchufarlo al endpoint `/qa` es trabajo mínimo (~5 líneas). Ver sección "Definition of Done" en Roadmap secuenciado. |
+
+#### Errores encontrados y resueltos
+
+Ninguno. El endpoint funcionó en el primer intento. La arquitectura de DI y los patrones ya establecidos (Repository, TelemetryClient, BackgroundTasks) permitieron implementar la feature sin sorpresas.
+
+#### Conceptos aprendidos
+
+**Lookup directo vs búsqueda semántica ¿cuándo usar cada uno?**
+No toda consulta a una base vectorial debe ser por similitud. Cuando el cliente ya conoce el identificador exacto del documento que necesita (`product_id`), un lookup directo es más correcto, más barato (sin embedding) y más predecible que una búsqueda semántica que podría devolver el producto equivocado con un score alto. El `product_id` opcional en `QARequest` captura ambos casos de uso en un solo endpoint.
+
+**Prompt engineering para anti-alucinación**
+La instrucción "si la información NO está en la ficha, di que no la tienes" no es suficiente por sí sola. Debe ser explícita, específica y estar en el system prompt (no en el user prompt) para que el modelo la aplique consistentemente. La Prueba 3 confirmó que el prompt diseñado funciona en producción real: Gemini respondió "No tengo esa información disponible en la ficha técnica" ante una pregunta de color que no estaba en el catálogo.
+
+**Definition of Done como disciplina real, no burocracia**
+El endpoint `/qa` se implementó con observabilidad y evaluación online en la misma iteración — no en "la próxima". El costo marginal fue mínimo (~5 líneas reutilizando mecanismos ya existentes). El resultado: el dashboard de LangFuse ya muestra traces de `/qa` con el mismo nivel de visibilidad que `/search`, desde el primer deploy.
+
+**Árbol de spans dinámico según flujo**
+El mismo `TelemetryClient.observation()` genera árboles de spans distintos dependiendo del flujo de ejecución: con `product_id` aparece `qa_lookup_by_id`; sin él aparecen `qa_embed_question` + `qa_find_product`. LangFuse muestra esto claramente, lo que facilita diagnosticar diferencias de latencia entre ambos flujos.
+
+#### Resultados
+
+```
+3 pruebas end-to-end exitosas:
+├── Inferencia semántica: identificó Sony WH-1000XM5 desde
+│   lenguaje natural, product_found_via="semantic_search"
+├── Lookup directo: saltó embedding+búsqueda, respuesta en ~0.8s
+│   vs ~3.5s de inferencia semántica, product_found_via="direct_id"
+└── Anti-alucinación: "No tengo esa información disponible en
+    la ficha técnica" ante pregunta de color no indexado ✅
+
+52 tests totales, 0 fallos, suite completa en <1s
+
+Observabilidad confirmada en LangFuse:
+├── Flujo con product_id: qa_pipeline → qa_lookup_by_id → qa_generate
+└── Flujo sin product_id: qa_pipeline → qa_embed_question
+                                      → qa_find_product → qa_generate
+```
+
+---
+
 ## Roadmap de features
 
 Nuevas capacidades de producto organizadas por complejidad técnica y valor de aprendizaje. Cada feature documenta qué reutiliza del pipeline actual, qué es nuevo, y en qué etapas se requiere ingeniería clásica, ML tradicional o AI con LLM.
@@ -1520,6 +1664,19 @@ rag-product-search-project/
 **Por qué el Frontend se posterga hasta el paso 13:** construir UI antes sería prematuro, no habría suficiente
 funcionalidad real (Búsqueda, Q&A, Carrito, Recomendaciones, Comparador) para justificar una interfaz completa. El Frontend tiene más valor cuando consume varias features ya maduras.
 
+### Definition of Done (a partir de la Iteración 006)
+
+Toda feature nueva que genere respuestas con un LLM debe incluir, en la misma iteración, sin excepción:
+
+1. Funcionalidad implementada y funcionando end-to-end
+2. Tests unitarios del código nuevo
+3. Observabilidad con LangFuse (traces del nuevo flujo)
+4. Evaluación online (Faithfulness + Answer Relevance vía BackgroundTasks con muestreo)
+
+El mecanismo de evaluación ya existe desde las Iteraciones 003-004. Implementarlo en cada feature nueva es reutilizar lo construido, no construir algo nuevo — el costo marginal es mínimo (~5 líneas) y la deuda de omitirlo se acumula rápido cuando hay múltiples features sin evaluar.
+
+**Excepción documentada:** si una feature no genera respuestas con LLM (ej: endpoint de solo búsqueda sin generación), el punto 4 no aplica — pero se documenta explícitamente por qué en el DEVLOG de esa iteración, nunca se omite silenciosamente.
+
 ### Orden de ejecución y razonamiento
 
 ```
@@ -1591,6 +1748,8 @@ Pieza más "investigación" del backlog. Requiere dataset de entrenamiento propi
    → mejoras transversales (hybrid search, re-ranking, caché)
      se posponen hasta que existan múltiples pipelines que
      se beneficien simultáneamente
+
+
 ```
 
-*Última actualización: Iteración 005 completa — 43 tests unitarios, suite completa en menos de 1 segundo*
+*Última actualización: Iteración 006 completa — Q&A sobre productos con observabilidad y evaluación online*
