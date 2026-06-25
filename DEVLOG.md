@@ -1629,9 +1629,13 @@ Mejoras de ingeniería al pipeline existente, separadas del roadmap de features 
 | 🔴 Alta | Evaluación de recuperación — Precision@K, Recall@K, NDCG | Métricas de Information Retrieval |
 | 🔴 Alta | Evaluación de generación — Faithfulness, Answer Relevance, Context Precision (RAGAs) | Evaluación de pipelines RAG |
 | 🔴 Alta | Observabilidad con LangFuse — trazas, latencia, costos, feedback | MLOps, monitoreo de LLMs en producción |
+| 🔴 Alta | Rate limiting por usuario | Evitar abuso de la API — un usuario no debe poder agotar la cuota de toda la aplicación. Mencionado explícitamente como señal de madurez en entrevistas (Pregunta 5) |
+| 🔴 Alta | Confidence score filtering | Usar similarity_score de ChromaDB para filtrar resultados con baja confianza antes de pasarlos al LLM. Reduce hallucinations desde el retrieval (Pregunta 3) |
 | 🟡 Media | Caché de embeddings para queries frecuentes | Optimización de latencia y costos |
 | 🟡 Media | Re-ranking con cross-encoder | Pipeline RAG avanzado |
 | 🟡 Media | Hybrid search — semántico + BM25 | Técnica estándar en producción a escala |
+| 🟡 Media | Guardrails básicos | System prompt instruye al modelo a rechazar preguntas fuera de dominio y no revelar información del sistema (Pregunta 5 — señal de madurez en producción) |
+| 🟡 Media | Prompt injection protection | Validar que el input del usuario no intenta manipular el system prompt con instrucciones adversariales (Pregunta 5 — security) |
 | 🟢 Baja | Containerización con Docker | Deployment estándar de microservicios |
 | 🟢 Baja | Job de re-indexación automática | Pipelines de datos en producción |
 | 🟢 Baja | Fine-tuning del modelo de embeddings | ML avanzado específico de dominio |
@@ -1689,43 +1693,53 @@ Calentamiento de bajo riesgo. Reutiliza 100% el pipeline actual, sin infraestruc
 3. 🆕 Reestructuración del repo + Backend mínimo ai-service/ + backend/ (modelos de Usuario y Carrito, persistencia simple). 
 Prerequisito real de la Feature 1, no postergable una vez se llega ahí. README se actualiza en este punto.
 
-4. 🔴 Feature 1 — Carrito Inteligente (núcleo, sin OCR) 
+4. 🔴 Rate limiting por usuario
+Antes del Carrito porque el agente multiplica el riesgo de abuso dado que en cada paso consume tokens y cuota
+
+5. 🔴 Confidence score filtering
+Se mejora retrieval antes de construir el agente, que depende de retrieval de mayor calidad
+
+6. 🔴 Feature 1 — Carrito Inteligente (núcleo, sin OCR) 
 Parsing de objetivo + descomposición + búsqueda multi-categoría + personalización por perfil. El mayor salto de aprendizaje nuevo: Agentic RAG, tool calling, orquestación multi-paso.
 
-5. 🟡 Feature 6 — OCR como servicio transversal
+7. 🟡 Feature 6 — OCR como servicio transversal
 Depende explícitamente de la Feature 1 (lista de mercado, recibo). Se integra como segunda mitad del Carrito.
 
-6. 🟡 Observabilidad y evaluación del Carrito
+8. 🟡 Observabilidad y evaluación del Carrito
 El agente necesita su propia instrumentación con LangFuse y métricas específicas para flujos multi-pasos. Faithfulness y Answer Relevance no capturan bien la calidad de una orquestación de varios pasos.
 
-7. 🟡 Feature 4 — Detección de Intención y Routing
+9. 🟡 Feature 4 — Detección de Intención y Routing
 Recién tiene sentido real con múltiples pipelines existiendo (Búsqueda, Q&A, Carrito) entre los cuales rutear. Antes, habría sido routing trivial sin valor.
 
-8. 🟡 Hybrid search (semántico + BM25)
+10. 🟡 Hybrid search (semántico + BM25)
 Mejora transversal en la cual se beneficia a todos los pipelines existentes simultáneamente, más valor cuantos más existan.
 
-9. 🟡 Re-ranking con cross-encoder
+11. 🟡 Re-ranking con cross-encoder
 Mismo razonamiento que Hybrid search.
 
-10. 🟢 Feature 2 — Recomendaciones Personalizadas
+12. 🟡 Guardrails básicos
+
+13. 🟡 Prompt injection protection
+
+14. 🟢 Feature 2 — Recomendaciones Personalizadas
 Aprovecha el historial de usuario real que ya existe gracias al Backend (paso 3). Antes no habría datos de comportamiento reales para hacer recomendaciones.
 
-11. 🟢 Feature 3 — Comparador Semántico de Productos
+15. 🟢 Feature 3 — Comparador Semántico de Productos
 Sin dependencias bloqueantes. Cierre de bajo riesgo.
 
-12. 🟢 Caché de embeddings
+16. 🟢 Caché de embeddings
 Más beneficio cuantos más pipelines compiten por el mismo modelo de embeddings. Tiene más sentido con varios pipelines ya construidos que al principio.
 
-13. 🆕 Frontend
+17. 🆕 Frontend
 Suficiente funcionalidad construida (Búsqueda, Q&A, Carrito, Recomendaciones, Comparador) para justificar una UI real completa.
 
-14. 🟢 Docker
+18. 🟢 Docker
 Empaquetar para deployment, cuando el sistema ya está relativamente completo y vale la pena "congelarlo".
 
-15. 🟢 Job de re-indexación automática
+19. 🟢 Job de re-indexación automática
 Solo relevante si el catálogo cambia con frecuencia. Baja urgencia en este proyecto mientras se trabaja con 12 productos fijos.
 
-16. 🟢 Fine-tuning del modelo de embeddings
+20. 🟢 Fine-tuning del modelo de embeddings
 Pieza más "investigación" del backlog. Requiere dataset de entrenamiento propio del dominio. Cierre/extra.
 ```
 
@@ -1751,5 +1765,337 @@ Pieza más "investigación" del backlog. Requiere dataset de entrenamiento propi
 
 
 ```
+---
 
-*Última actualización: Iteración 006 completa — Q&A sobre productos con observabilidad y evaluación online*
+## Preparación para entrevistas técnicas
+
+Esta sección documenta cómo responder preguntas que aparecen en el 90%+ de los procesos de selección para AI Engineer en 2026, usando evidencia real de este proyecto. Se actualiza con cada iteración.
+
+---
+
+### Pregunta 1 — "Explicame cómo construirías un RAG para [caso X]"
+
+**Lo que buscan:** chunking strategy, diferencia entre vector search / hybrid search / reranking, evaluación, trade-offs latencia vs accuracy.
+
+**Cómo responder con este proyecto:**
+
+*Chunking strategy:*
+En este proyecto los documentos son fichas de productos cortas (~200 palabras). El documento completo se indexa como una unidad. Para documentos largos (manuales, PDFs, contratos) usaría chunking semántico por párrafos con overlap del 20% para no perder contexto entre chunks, y evaluaría el tamaño óptimo midiendo Context Recall en el golden dataset. El criterio es: el chunk debe ser lo suficientemente grande para tener contexto semántico completo, y lo suficientemente pequeño para que el retrieval sea preciso.
+
+*Vector search vs hybrid search vs reranking:*
+```
+Vector search    → implementado (ChromaDB + similitud coseno)
+                   bueno para intención semántica, malo para
+                   términos exactos (nombres de modelos, SKUs)
+
+Hybrid search    → pendiente (Iteración 008 del roadmap)
+                   combina vector search + BM25 keyword search
+                   mejor cobertura para queries con términos exactos
+                   Y semántica (estándar en producción a escala)
+
+Reranking        → pendiente (Iteración 009)
+                   cross-encoder evalúa (query, doc) juntos
+                   más preciso que embedding independiente,
+                   se aplica sobre top-k resultados del retrieval
+                   para reordenar antes de pasar al LLM
+```
+
+*Evaluación:*
+Implementé un pipeline de evaluación con 4 métricas: Faithfulness (anti-alucinación), Answer Relevance, Context Precision y Context Recall. Funciona en dos modalidades: offline con un golden dataset de 10 casos anotados manualmente, y online evaluando el 20% del tráfico real en background sin afectar latencia del usuario.
+
+*Trade-offs documentados en el proyecto:*
+- ChromaDB vs FAISS: elegí ChromaDB por persistencia nativa y metadata filtering built-in, sacrificando velocidad a escala (FAISS es más rápido en millones de vectores)
+- RAGAs vs implementación propia: RAGAs traía 38 dependencias con conflictos de versiones y un bug interno. Para 12 productos, el costo no era proporcional al valor — implementé las métricas directamente con Gemini como juez
+- sentence-transformers vs OpenAI Embeddings: local y gratuito vs mejor calidad y costo por llamada — elegí local para desarrollo, OpenAI o modelo fine-tuneado para producción real
+
+**RED FLAG a evitar:** "uso LangChain y ya". En este proyecto cada componente está implementado directamente para entender qué pasa por debajo.
+
+---
+
+### Pregunta 2 — "¿Cuándo usarías RAG vs fine-tuning vs prompting?"
+
+**Lo que buscan:** criterios claros para cada approach con ejemplos.
+
+```
+RAG → conocimiento externo, cambiante o citeable
+      Cuándo: catálogos de productos, documentación interna,
+              bases de conocimiento actualizables, cuando
+              necesitás que el usuario pueda verificar la fuente
+      Ejemplo en este proyecto: búsqueda de productos y Q&A
+              sobre fichas técnicas. El catálogo puede cambiar
+              sin re-entrenar el modelo
+
+Fine-tuning → formato/estilo consistente, reducir tokens,
+              comportamiento muy específico de dominio
+              Cuándo: cuando el modelo base no "habla" el idioma
+              de tu dominio (ej: términos legales muy específicos),
+              cuando querés reducir el tamaño del system prompt
+              porque lo vas a pagar millones de veces
+              Ejemplo: MELI fine-tunea modelos de embeddings en
+              español latinoamericano con su catálogo específico.
+              Esto no se puede hacer con RAG
+
+Prompting → tasks simples, prototipado rápido, pocos ejemplos
+             Cuándo: clasificación de intención, extracción de
+             datos estructurados, tasks que un buen system prompt
+             resuelve sin recuperar contexto externo
+             Ejemplo en este proyecto: el prompt anti-alucinación
+             de QAService es prompting puro — no necesita RAG
+             para instruir al modelo a admitir falta de información
+```
+
+**Criterio general:** empezar siempre con prompting (más barato, más rápido). Si el modelo necesita conocimiento externo → RAG. Si el modelo necesita cambiar su comportamiento base → fine-tuning. Si todo lo anterior falla → fine-tuning sobre RAG.
+
+---
+
+### Pregunta 3 — "Tu RAG tiene hallucination rate del 15%. ¿Cómo lo bajas?"
+
+**Lo que buscan:** mejoras en retrieval, prompt, grounding check, confidence filtering, eval pipeline para medir impacto.
+
+**Cómo responder con este proyecto:**
+
+*Paso 1 — Medir primero (ya implementado):*
+El pipeline de evaluación con Faithfulness mide exactamente el hallucination rate. Sin esto, cualquier mejora es intuición, no ingeniería. El 15% lo vería en el dashboard de LangFuse como tendencia de los scores de Faithfulness en el tiempo.
+
+*Paso 2 — Identificar la causa raíz:*
+```
+¿El retrieval trae contexto irrelevante?
+→ Context Precision baja → mejorar retrieval
+
+¿El retrieval no trae todo el contexto necesario?
+→ Context Recall bajo → mejorar chunking o n_results
+
+¿El LLM alucina a pesar de tener buen contexto?
+→ Faithfulness baja con Context Precision alta → mejorar prompt
+```
+
+*Paso 3 — Mejoras en retrieval:*
+- Hybrid search (BM25 + vector) para mejor cobertura — pendiente
+- Reranking con cross-encoder para mejor ordenamiento — pendiente
+- Confidence score filtering: ya tengo `similarity_score` en ChromaDB, puedo filtrar resultados con score < 0.6 antes de pasarlos a Gemini. Pendiente de implementar.
+
+*Paso 4 — Mejoras en el prompt:*
+- Instrucciones más estrictas de grounding (ya implementado en QAService, pendiente de aplicar a SearchService también)
+- Agregar en el prompt: "Si no encuentras la información en los productos proporcionados, di explícitamente que no la tienes"
+
+*Paso 5 — Grounding check post-generación:*
+Verificar programáticamente que cada afirmación de la respuesta tiene evidencia en los documentos recuperados — es exactamente lo que hace `evaluate_faithfulness()` como LLM-as-judge. Se puede hacer inline (bloqueante, más lento) o en background (como ya lo hacemos con evaluación online).
+
+**RED FLAG a evitar:** no mencionar evaluación. Sin medir Faithfulness antes y después de cada cambio, no hay forma de saber si la mejora funcionó.
+
+---
+
+### Pregunta 4 — "Diseñá un sistema de agentes para [caso Y]"
+
+**Lo que buscan:** human-in-the-loop, retry logic, límite de iteraciones, observability, costos.
+
+**Estado actual:** el Carrito Inteligente (Iteración 007 del roadmap) es el agente de este proyecto. Esta sección se actualiza completamente cuando esté implementado.
+
+**Criterios de diseño que ya aplico (para responder ahora):**
+
+```
+Retry logic:     call_with_retry() con backoff exponencial
+                 implementado y reutilizable (Iteración 003)
+
+Observability:   LangFuse con spans por cada paso del pipeline
+                 (Iteraciones 002, 006) — el agente tendrá
+                 un span por cada herramienta que ejecute
+
+Costos:          cada herramienta del agente = tokens = costo.
+                 Muestreo en evaluación online para no gastar
+                 cuota innecesariamente (Iteración 004)
+```
+
+**Pendiente de implementar en el Carrito (Iteración 007):**
+- Límite máximo de pasos (`max_steps`) para evitar loops infinitos
+- Human-in-the-loop para carritos sobre cierto monto
+- Fallback a búsqueda simple si el agente falla
+- Logging de cada decisión del agente en LangFuse
+
+---
+
+### Pregunta 5 — "¿Cómo deployarías un LLM app en producción?"
+
+**Lo que buscan:** caching, rate limiting, guardrails, monitoring,
+fallbacks, security.
+
+**Cómo responder con este proyecto:**
+
+```
+Monitoring:      ✅ implementado — LangFuse trackea latencia,
+                 costos estimados, Faithfulness y Answer Relevance
+                 en tiempo real (Iteraciones 002, 004)
+
+Fallbacks:       ✅ implementado — manejo semántico de errores
+                 (503 para Gemini caído, 429 para rate limit,
+                 retry con backoff exponencial)
+
+Rate limiting    ⚠️ pendiente — agregar al backlog con prioridad
+por usuario:     alta. Sin esto, un usuario puede agotar la cuota
+                 de toda la aplicación con un script de abuso.
+
+Semantic cache:  ⚠️ pendiente (Iteración 012 del roadmap)
+                 queries similares devuelven respuesta cacheada
+                 sin llamar a Gemini, logrando una reducción de 
+                 costos 60-80% según benchmarks de la industria
+
+Guardrails:      ⚠️ pendiente — instrucciones en system prompt
+                 para rechazar preguntas fuera de dominio
+                 (ej: "no respondo preguntas sobre temas no
+                 relacionados con productos del catálogo")
+
+Prompt injection: ⚠️ pendiente — validar que el input del usuario
+                 no intenta sobreescribir el system prompt
+                 (ej: "ignora las instrucciones anteriores y...")
+
+Security / PII:  ⚠️ pendiente — no loggear datos personales
+                 en LangFuse (nombres, emails, direcciones
+                 que podrían aparecer en queries de usuarios)
+```
+---
+
+## Mindset AI Engineer Senior — Principios de trabajo
+
+Principios extraídos del análisis de ejercicios reales de nivel mid/senior y de lo que buscan los hiring managers en 2026. Se aplican en TODAS las iteraciones desde este punto.
+
+---
+
+### Principio 1 — "¿Qué pasa por debajo?" antes de usar cualquier abstracción
+
+Antes de agregar cualquier librería o framework, responder:
+1. ¿Qué hace internamente?
+2. ¿Por qué no lo implementamos directamente?
+3. ¿Qué perdemos en capacidad de debuggear si lo usamos?
+
+**La regla:** si no entendés qué pasa por debajo, no vas a saber debuggear cuando falle en producción. Los frameworks ocultan la física del sistema.
+
+**Evidencia en este proyecto:**
+- Construimos el pipeline RAG sin LangChain ni LlamaIndex. Cuando el rate limit de Gemini falló en la Iteración 003, supimos exactamente en qué capa estaba el problema
+- Descartamos RAGAs (38 dependencias, bug interno) e implementamos las métricas directamente. Ahora entendemos qué calcula cada una y por qué
+- Implementamos `call_with_retry` propio en lugar de usar una librería de retry. Sabemos exactamente qué distingue un error por minuto de uno por día
+
+**RED FLAG a evitar:** "uso LangChain y ya" sin saber qué hace `chain.run()` internamente.
+
+---
+
+### Principio 2 — "¿Qué le falta para producción?" al cerrar cada iteración
+
+Cada iteración termina con una subsección explícita:
+**"Gap entre implementación actual y producción real"**
+
+No es autocrítica. Es el ejercicio de criterio que separa un junior ("funciona en local") de un senior ("funciona en local, y sé exactamente qué le falta para producción real y por qué lo prioricé así").
+
+**Template para cada iteración:**
+```
+Gap identificado    → qué falta
+Impacto             → qué pasa si no se resuelve en producción
+Prioridad           → cuándo se resuelve (esta iteración,
+                       backlog, o no aplica para este proyecto)
+```
+
+**Ejemplo aplicado retroactivamente a la Iteración 001:**
+
+| Gap | Impacto en producción | Prioridad |
+|---|---|---|
+| Sin confidence score filtering | LLM recibe contexto irrelevante → hallucinations | 🔴 Backlog |
+| Sin rate limiting por usuario | Un usuario puede agotar la cuota de toda la app | 🔴 Backlog |
+| Sin guardrails | El LLM puede responder preguntas fuera de dominio | 🟡 Backlog |
+| Sin semantic cache | Queries repetidas consumen cuota innecesariamente | 🟡 Backlog |
+| ChromaDB en lugar de pgvector | No hay JOINs con datos relacionales | 🟡 Se resuelve en reestructuración |
+| Chunking fijo (doc completo) | No escala a documentos largos sin chunking inteligente | 🟢 Documentado, no urgente |
+
+---
+
+### Principio 3 — Conectar cada decisión técnica con las 5 preguntas de entrevista
+
+Cuando se implementa algo, identificar explícitamente a qué pregunta de entrevista responde y cómo articularlo.
+
+**Mapa de decisiones ya tomadas:**
+
+| Decisión | Pregunta | Cómo articularlo |
+|---|---|---|
+| Pipeline RAG sin frameworks | P1 — diseño de RAG | "Implementé cada capa directamente para entender qué pasa por debajo y poder debuggear en producción" |
+| ChromaDB vs FAISS | P1 — trade-offs | "Elegí ChromaDB por persistencia nativa y metadata filtering, sacrificando velocidad a escala" |
+| sentence-transformers local | P1 — trade-offs | "Local y gratuito para desarrollo. En producción usaría modelo fine-tuneado en el dominio específico" |
+| RAGAs vs implementación propia | P2 — cuándo usar cada approach | "El costo de 38 dependencias no era proporcional al valor para 12 productos — implementé las métricas directamente" |
+| Faithfulness + Answer Relevance | P3 — bajar hallucination rate | "Mido el hallucination rate con Faithfulness. Sin medir, cualquier mejora es intuición, no ingeniería" |
+| LangFuse observabilidad | P4 — observability de agentes | "Cada decisión del pipeline queda trackeada con latencia y contexto — esencial para diagnosticar problemas" |
+| BackgroundTasks para evaluación | P5 — deployment en producción | "La evaluación corre después de responder al usuario — la observabilidad nunca degrada la experiencia" |
+| Manejo semántico 503/429/500 | P5 — fallbacks | "Distingo errores transitorios (503, reintentable) de errores permanentes (500, reportar como bug)" |
+| call_with_retry con backoff | P4 — retry logic en agentes | "Backoff exponencial para rate limits por minuto, fail-fast para rate limits por día" |
+
+---
+
+### Principio 4 — pgvector como target de producción
+
+**El insight del ejercicio sin frameworks:**
+pgvector (PostgreSQL + extensión vectorial) es la decisión de producción correcta para sistemas que combinan vectores con datos relacionales. Un solo sistema de base de datos en lugar de ChromaDB + PostgreSQL por separado.
+
+```
+ChromaDB (desarrollo)            pgvector (producción)
+──────────────────────           ──────────────────────
+Solo vectores                    Vectores + datos relacionales
+                                  en la MISMA base de datos
+Zero config                      Requiere PostgreSQL
+No hay JOINs                     JOINs entre vectores y usuarios,
+                                  perfiles, carritos — en SQL nativo
+Ideal para prototipos            Ideal para producción
+```
+
+**Aplicación en este proyecto:**
+- ChromaDB se mantiene para `ai-service/` (el servicio de IA ya construido) — cambiarlo introduciría riesgo sin valor pedagógico adicional en este punto
+- El `backend/` que se construirá en la próxima iteración usará PostgreSQL + pgvector desde el inicio — no ChromaDB + una base de datos separada
+- El Carrito Inteligente necesita JOINs entre vectores de productos y perfiles de usuario — pgvector lo hace en SQL nativo, ChromaDB no puede
+
+**Para entrevistas:** "En desarrollo uso ChromaDB por la velocidad de setup. En producción migraría a pgvector sobre PostgreSQL para tener vectores y datos relacionales en el mismo sistema, eliminar una dependencia de infraestructura, y poder hacer JOINs en SQL."
+
+---
+
+### Principio 5 — Chunking como decisión de ingeniería, no un parámetro
+
+El chunking determina la calidad del retrieval, que determina la calidad de las respuestas. No es un detalle de implementación.
+
+```
+Chunking por caracteres (frágil):
+"...La batería dura 30 ho"   ← chunk 1, corta en el medio
+"ras en modo ANC. El mic"    ← chunk 2, empieza sin contexto
+→ embeddings de ideas incompletas → retrieval ruidoso
+
+Chunking semántico (robusto):
+"La batería dura 30 horas en modo ANC."  ← unidad completa
+"El micrófono reduce ruido de voz."       ← unidad completa
+→ embeddings que capturan ideas completas → retrieval preciso
+```
+
+**Estrategias de chunking en orden de sofisticación:**
+
+| Estrategia | Cuándo usarla |
+|---|---|
+| Documento completo | Documentos cortos (<500 palabras) — lo que hace este proyecto con fichas de productos |
+| Por caracteres con overlap | Baseline rápido, aceptable para prototipo |
+| Por párrafos/secciones | Documentos con estructura clara (artículos, manuales) |
+| Semántico con clustering | Documentos sin estructura clara, máxima calidad |
+| Jerárquico (parent-child) | Documentos largos donde necesitás contexto amplio + retrieval preciso |
+
+**Estado en este proyecto:** documento completo como chunk único — correcto para fichas cortas. Para el Carrito Inteligente con documentos más largos, se evaluará chunking por secciones con overlap, midiendo impacto en Context Recall.
+
+---
+
+### Cómo se aplican estos principios en cada iteración
+
+Al abrir una iteración:
+- Documentar el diseño ANTES de codear 
+- Conectar explícitamente con las 5 preguntas de entrevista
+- Identificar qué pasa "por debajo" de cada abstracción nueva
+
+Al cerrar una iteración:
+- Completar "Gap entre implementación actual y producción real"
+- Actualizar el mapa de decisiones vs preguntas de entrevista
+- Registrar qué nuevos conceptos permiten responder mejor
+  las 5 preguntas
+
+**La pregunta que se hace un senior al final de cada iteración:**
+> "Si mañana tengo una entrevista técnica, ¿puedo explicar cada decisión que tomé en esta iteración, sus trade-offs, y qué le faltaría para ir a producción real?"
+---
+
+*Última actualización: Mindset senior integrado — preparación para entrevistas, 5 principios de trabajo, backlog y roadmap actualizados*
