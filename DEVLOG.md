@@ -888,8 +888,6 @@ La duplicación de código no solo ocurre dentro de un mismo archivo — ocurre 
 
 ---
 
----
-
 ### Iteración 004 — Evaluación online en tiempo real
 
 **Fecha:** 2026
@@ -1308,6 +1306,157 @@ Observabilidad confirmada en LangFuse:
 
 ---
 
+### Iteración 007 — Reestructuración del repo + Backend mínimo
+
+**Fecha:** 2026
+**Rama:** `feature/repo-restructure-backend`
+**Estado:** 🚧 en progreso
+
+#### Por qué esta iteración y por qué ahora
+
+El Carrito Inteligente (Iteración 008) necesita persistencia de perfiles de usuario y carritos — lógica de negocio que no debe vivir en `ai-service/`. Sin esta reestructuración, el Carrito contaminaría la capa de IA con responsabilidades que no son suyas, violando el mismo principio SRP que aplicamos consistentemente desde la Fase 4.
+
+#### Decisiones de diseño tomadas antes de codear
+
+**1. Stack del backend**
+
+| Decisión | Elegido | Alternativa descartada | Por qué |
+|---|---|---|---|
+| Base de datos | PostgreSQL + pgvector | SQLite | pgvector disponible desde el día 1, JOINs entre vectores y datos relacionales en SQL nativo, target de producción real |
+| ORM | SQLAlchemy 2.x (async) | SQLAlchemy 1.x sync | Consistente con FastAPI async-first. SQLAlchemy 2.x tiene mejor soporte para pgvector |
+| Migraciones | Alembic | Migraciones manuales | Estándar de la industria, trazabilidad de cambios de esquema |
+| Infraestructura local | Docker Compose | PostgreSQL instalado directo | Reproduce el entorno de producción, portable entre máquinas, adelanta el paso de Docker del roadmap |
+
+**2. pgvector vs ChromaDB — aplicación del Principio 4**
+
+```
+ai-service/ (ya construido)      backend/ (nuevo)
+────────────────────────         ──────────────────
+ChromaDB                         PostgreSQL + pgvector
+├── fichas de productos          ├── perfiles de usuario
+├── embeddings semánticos        ├── carritos persistentes
+└── metadata de búsqueda         ├── historial de compras
+                                  └── embeddings de comportamiento
+                                      del usuario (futuro)
+```
+
+No migramos ChromaDB a pgvector en `ai-service/`. El costo de migración no agrega valor pedagógico en este punto y el servicio ya funciona bien. pgvector se usa en `backend/` para los datos relacionales nuevos donde sí hay JOINs naturales entre vectores y tablas.
+
+**3. Estructura final del repositorio**
+
+```
+rag-product-search-project/     ← raíz del mono-repo
+├── ai-service/                  ← TODO lo que existe hoy
+│   ├── app/
+│   ├── data/
+│   ├── scripts/
+│   ├── tests/
+│   ├── requirements.txt
+│   └── pytest.ini
+├── backend/                     ← NUEVO
+│   ├── app/
+│   │   ├── api/
+│   │   │   └── v1/
+│   │   │       └── endpoints/
+│   │   ├── core/
+│   │   │   ├── config.py
+│   │   │   └── database.py     ← conexión async PostgreSQL
+│   │   ├── models/             ← modelos SQLAlchemy
+│   │   │   ├── user.py
+│   │   │   └── cart.py
+│   │   └── main.py
+│   ├── alembic/                ← migraciones
+│   ├── requirements.txt
+│   └── .env.example
+├── docker-compose.yml           ← orquesta PostgreSQL + ai-service + backend
+├── DEVLOG.md                    ← se mantiene en la raíz
+└── README.md                    ← se actualiza aquí
+```
+
+**4. Modelos de dominio mínimos para el Carrito**
+
+Solo lo que el Carrito Inteligente necesita — no más:
+
+```python
+# Usuario — perfil de contexto para personalización
+User:
+├── id (UUID)
+├── name
+├── email
+├── household_type  # "single", "couple", "family_with_kids"
+├── num_children    # para personalización del Carrito
+├── has_pets        # idem
+├── budget_monthly  # presupuesto mensual estimado
+└── dietary_prefs   # preferencias alimentarias (JSON)
+
+# Carrito — estado persistente de una sesión de compra
+Cart:
+├── id (UUID)
+├── user_id (FK → User)
+├── objective       # "mercado semanal", "gripa en casa"
+├── status          # "draft", "confirmed", "ordered"
+├── total_estimated # precio total estimado
+└── created_at
+
+# CartItem — productos dentro de un carrito
+CartItem:
+├── id
+├── cart_id (FK → Cart)
+├── product_id      # referencia al catálogo de ai-service
+├── product_name    # desnormalizado para evitar JOIN con ai-service
+├── quantity
+├── unit_price
+└── similarity_score # qué tan relevante fue el producto para el objetivo
+```
+
+#### Qué se va a construir
+
+**Infraestructura:**
+- `docker-compose.yml` en la raíz — PostgreSQL 16 + pgvector
+- `backend/` con estructura FastAPI + SQLAlchemy async + Alembic
+- Primera migración: tablas `users`, `carts`, `cart_items`
+
+**Endpoints mínimos del backend:**
+- `POST /api/v1/users` — crear perfil de usuario
+- `GET /api/v1/users/{user_id}` — obtener perfil
+- `POST /api/v1/carts` — crear carrito
+- `GET /api/v1/carts/{cart_id}` — obtener carrito con items
+- `GET /health` — health check del backend
+
+**Reestructuración:**
+- Mover todo el contenido actual a `ai-service/`
+- Actualizar `README.md` para reflejar arquitectura de 3 capas
+- Actualizar paths en scripts y configuración
+
+#### Qué reutiliza del proyecto actual
+
+- Todos los patrones ya establecidos: Settings con Pydantic, Factory + lru_cache, Layered Architecture, DI
+- El mismo estilo de validación con Pydantic en los modelos de request/response del backend
+
+#### Qué es nuevo
+
+- PostgreSQL + pgvector via Docker
+- SQLAlchemy 2.x async con AsyncSession
+- Alembic para migraciones
+- `docker-compose.yml` orquestando múltiples servicios
+
+#### Gap entre implementación actual y producción real
+
+| Gap | Impacto en producción | Prioridad |
+|---|---|---|
+| Sin autenticación (JWT/OAuth) | Cualquiera puede acceder a perfiles ajenos | 🔴 Crítico para producción, fuera de alcance de esta iteración |
+| Sin rate limiting por usuario | Un usuario puede abusar del backend | 🔴 Backlog |
+| Sin encriptación de datos sensibles | PII del usuario en texto plano en BD | 🟡 Importante en producción real |
+| Docker Compose sin health checks | Un servicio puede arrancar antes que sus dependencias | 🟡 Mejora de robustez |
+
+#### Preguntas abiertas al inicio de la iteración
+
+- ¿Cómo comunican `ai-service/` y `backend/` entre sí? ¿HTTP interno o comparten la misma instancia de FastAPI?
+- ¿Los tests del backend van en `backend/tests/` o en una carpeta `tests/` en la raíz del mono-repo?
+- ¿Alembic autogenera las migraciones desde los modelos SQLAlchemy, o se escriben manualmente?
+- ¿pgvector se instala como extensión de PostgreSQL en el mismo Docker Compose, o se usa una imagen separada?
+
+---
 ## Roadmap de features
 
 Nuevas capacidades de producto organizadas por complejidad técnica y valor de aprendizaje. Cada feature documenta qué reutiliza del pipeline actual, qué es nuevo, y en qué etapas se requiere ingeniería clásica, ML tradicional o AI con LLM.
@@ -2098,4 +2247,4 @@ Al cerrar una iteración:
 > "Si mañana tengo una entrevista técnica, ¿puedo explicar cada decisión que tomé en esta iteración, sus trade-offs, y qué le faltaría para ir a producción real?"
 ---
 
-*Última actualización: Mindset senior integrado — preparación para entrevistas, 5 principios de trabajo, backlog y roadmap actualizados*
+*Última actualización: Iteración 007 en progreso — Reestructuración del repo + Backend mínimo*
