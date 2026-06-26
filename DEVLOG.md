@@ -1449,12 +1449,14 @@ CartItem:
 | Sin encriptación de datos sensibles | PII del usuario en texto plano en BD | 🟡 Importante en producción real |
 | Docker Compose sin health checks | Un servicio puede arrancar antes que sus dependencias | 🟡 Mejora de robustez |
 
-#### Preguntas abiertas al inicio de la iteración
+#### Preguntas abiertas al inicio de la iteración — resolución
 
-- ¿Cómo comunican `ai-service/` y `backend/` entre sí? ¿HTTP interno o comparten la misma instancia de FastAPI?
-- ¿Los tests del backend van en `backend/tests/` o en una carpeta `tests/` en la raíz del mono-repo?
-- ¿Alembic autogenera las migraciones desde los modelos SQLAlchemy, o se escriben manualmente?
-- ¿pgvector se instala como extensión de PostgreSQL en el mismo Docker Compose, o se usa una imagen separada?
+| Pregunta | Estado | Resolución |
+|---|---|---|
+| ¿Cómo comunican ai-service/ y backend/? | ✅ Resuelta | HTTP interno via Docker Compose network. `backend/` llama a `ai-service/` con `httpx` — mismo patrón de microservicios que usan empresas como MELI. Cada servicio escala independientemente. |
+| ¿Dónde van los tests del backend? | ✅ Resuelta | `backend/tests/` — cada servicio tiene sus propios tests. Estándar en proyectos multi-servicio. `ai-service/tests/` ya existe y no cambia. |
+| ¿Alembic autogenera o migraciones manuales? | ✅ Resuelta | Autogeneración con revisión obligatoria antes de `upgrade head`. Alembic no detecta índices HNSW de pgvector — se agregan manualmente en el archivo generado. |
+| ¿pgvector en la misma imagen o separada? | ✅ Resuelta | Imagen oficial `pgvector/pgvector:pg16` — PostgreSQL 16 con pgvector preinstalado. Un solo contenedor, sin instalación manual. |
 
 ---
 ## Roadmap de features
