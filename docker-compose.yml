@@ -1,0 +1,115 @@
+# docker-compose.yml
+#
+# Orquesta los 3 servicios del proyecto:
+# - postgres: base de datos relacional con pgvector
+# - ai-service: pipeline RAG (FastAPI + ChromaDB + Gemini)
+# - backend: lógica de negocio (FastAPI + SQLAlchemy + PostgreSQL)
+#
+# Cómo usarlo:
+#   docker compose up          → levanta todo
+#   docker compose up postgres → levanta solo PostgreSQL
+#   docker compose down        → detiene y elimina contenedores
+#   docker compose logs -f     → ver logs de todos los servicios
+
+version: "3.9"
+
+services:
+
+  # ── PostgreSQL 16 con pgvector ─────────────────────────────────
+  postgres:
+    image: pgvector/pgvector:pg16
+    # La imagen pgvector/pgvector:pg16 es PostgreSQL 16 con la
+    # extensión pgvector preinstalada. No hay que instalar nada
+    # manualmente — solo activarla con CREATE EXTENSION vector.
+    container_name: rag_postgres
+    environment:
+      POSTGRES_USER: raguser
+      POSTGRES_PASSWORD: ragpassword
+      POSTGRES_DB: ragdb
+      # Estas variables configuran el usuario, contraseña y
+      # nombre de la base de datos que PostgreSQL crea al arrancar.
+      # En producción vendrían de secrets, no de aquí.
+    ports:
+      - "5432:5432"
+      # formato: "puerto_en_tu_maquina:puerto_en_el_contenedor"
+      # 5432 es el puerto estándar de PostgreSQL.
+      # Esto permite conectarte desde tu máquina con cualquier
+      # cliente PostgreSQL (DBeaver, psql, etc.) para inspeccionar
+      # la BD durante desarrollo.
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Volumen nombrado: persiste los datos de la BD entre
+      # reinicios del contenedor. Sin esto, cada `docker compose up`
+      # empezaría con una BD vacía.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U raguser -d ragdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      # pg_isready verifica que PostgreSQL está listo para aceptar
+      # conexiones. El backend espera este healthcheck antes de
+      # intentar conectarse — evita el error "connection refused"
+      # cuando el backend arranca antes que PostgreSQL.
+
+  # ── AI Service (lo que ya existe) ──────────────────────────────
+  ai-service:
+    build:
+      context: ./ai-service
+      dockerfile: Dockerfile
+    container_name: rag_ai_service
+    ports:
+      - "8000:8000"
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GEMINI_MODEL=${GEMINI_MODEL}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL}
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
+      - LANGFUSE_HOST=${LANGFUSE_HOST}
+      - EVAL_SAMPLE_RATE=${EVAL_SAMPLE_RATE}
+      # ${VARIABLE} lee el valor del archivo .env en la raíz.
+      # Docker Compose carga automáticamente el .env de la raíz.
+    volumes:
+      - ./ai-service/data:/app/data
+      # Monta la carpeta data/ del host dentro del contenedor.
+      # Así ChromaDB persiste sus datos aunque el contenedor
+      # se reinicie — sin esto perderías todos los embeddings.
+    depends_on:
+      postgres:
+        condition: service_healthy
+        # ai-service espera a que PostgreSQL esté healthy antes
+        # de arrancar — aunque ai-service no usa PostgreSQL
+        # directamente, es buena práctica tener un orden claro.
+
+  # ── Backend (nuevo) ────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: rag_backend
+    ports:
+      - "8001:8001"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://raguser:ragpassword@postgres:5432/ragdb
+      # postgresql+asyncpg:// → driver async de SQLAlchemy
+      # raguser:ragpassword   → credenciales definidas arriba
+      # @postgres:5432        → "postgres" es el nombre del servicio
+      #                         en Docker Compose, que funciona como
+      #                         hostname dentro de la red interna
+      # /ragdb                → nombre de la base de datos
+      - AI_SERVICE_URL=http://ai-service:8000
+      # URL del ai-service dentro de la red interna de Docker.
+      # El backend llama al ai-service con esta URL via httpx.
+    depends_on:
+      postgres:
+        condition: service_healthy
+        # El backend SÍ necesita PostgreSQL — no puede arrancar
+        # sin que la BD esté lista para aceptar conexiones.
+
+# ── Volúmenes nombrados ─────────────────────────────────────────
+volumes:
+  postgres_data:
+    # Docker gestiona este volumen automáticamente.
+    # Los datos persisten en el host aunque el contenedor
+    # se elimine con `docker compose down`.
+    # Solo `docker compose down -v` elimina también los volúmenes.

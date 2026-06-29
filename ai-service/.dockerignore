@@ -1,0 +1,26 @@
+# Entorno virtual — Docker instala sus propias dependencias
+venv/
+.venv/
+
+# Cache de Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# ChromaDB — se monta como volumen, no se copia
+data/vectorstore/
+
+# Variables de entorno con secrets
+.env
+
+# Tests — no necesarios en producción
+tests/
+
+# IDE
+.vscode/
+.idea/
+
+# Docker
+Dockerfile
+.dockerignore
